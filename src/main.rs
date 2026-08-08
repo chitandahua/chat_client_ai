@@ -7,7 +7,7 @@ mod protocol;
 
 use std::sync::{Arc, Mutex};
 
-use app::{AppState, Friend};
+use app::{AppState, Friend, FriendApply};
 use connection::Connection;
 use protocol::{
     AddFriendRequest, AuthFriendRequest, Frame, IncomingText, LoginResponse, NotifyAddFriend,
@@ -110,11 +110,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     push_ui_from_state(&ui, &s);
                 }
             }
-            // Server friend list carries no uid, so touid is unknown (0) until an
-            // incoming push teaches us the mapping. Surface it rather than dropping.
+            // If the friend's uid is unknown (0 — e.g. a friend added via a push
+            // whose uid never got learned), surface it rather than dropping.
             if touid == 0 {
                 if let Some(ui) = ui.upgrade() {
-                    ui.set_login_status(format!("无法发送给 {friend}:好友 uid 未知(尚未收到该好友的消息)").into());
+                    ui.set_login_status(format!("无法发送给 {friend}:好友 uid 未知").into());
                 }
                 return;
             }
@@ -508,8 +508,11 @@ async fn do_login(
 
     let data = resp.data.ok_or_else(|| "登录响应缺少数据".to_string())?;
 
-    let applies: Vec<(i64, String)> =
-        data.apply_list.into_iter().map(|a| (a.id, a.name.clone())).collect();
+    let applies: Vec<FriendApply> = data
+        .apply_list
+        .into_iter()
+        .map(|a| FriendApply { from_uid: a.id, name: a.name })
+        .collect();
     let friends: Vec<Friend> = data
         .friend_list
         .into_iter()

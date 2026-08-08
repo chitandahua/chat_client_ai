@@ -105,9 +105,9 @@ impl AppState {
 
     /// Seed pending applies from the login response, which now carries the
     /// applicant's uid. uid is 0 if the server didn't supply it.
-    pub fn seed_applies(&mut self, applies: Vec<(i64, String)>) {
-        for (uid, name) in applies {
-            self.apply_received(uid, name);
+    pub fn seed_applies(&mut self, applies: Vec<FriendApply>) {
+        for apply in applies {
+            self.apply_received(apply.from_uid, apply.name);
         }
     }
 
@@ -147,15 +147,15 @@ impl AppState {
     }
 
     /// Attribute an incoming push to a friend name. The login friend list
-    /// carries no uid and the search endpoint is broken server-side, so an
-    /// unmapped uid degrades to a readable `uid:N` label rather than dropping.
+    /// carries uids, so an unmapped uid means a sender we haven't met yet;
+    /// degrade to a readable `uid:N` label rather than dropping.
     pub fn friend_for_uid(&self, uid: i64) -> String {
         self.friend_name(uid).map(str::to_string).unwrap_or_else(|| format!("uid:{uid}"))
     }
 
     /// Route an incoming text push: learn the sender's uid if there is exactly
-    /// one friend with an unknown uid (login lists carry none), then deliver.
-    /// Returns the friend name the message was routed to.
+    /// one friend with an unknown uid (a compat fallback for servers that omit
+    /// uids in the login list), then deliver. Returns the friend name routed to.
     pub fn receive_push(&mut self, from_uid: i64, text: String) -> String {
         // Learn uid -> name when unambiguous: one friend whose uid is unknown.
         if self.friend_name(from_uid).is_none() {
@@ -370,11 +370,33 @@ mod tests {
     #[test]
     fn seed_applies_loads_login_apply_list_with_uids() {
         let mut state = AppState::new();
-        state.seed_applies(vec![(1, "aaa".into()), (3, "bbb".into())]);
+        state.seed_applies(vec![
+            FriendApply { from_uid: 1, name: "aaa".into() },
+            FriendApply { from_uid: 3, name: "bbb".into() },
+        ]);
         assert_eq!(state.applies.len(), 2);
         assert_eq!(state.applies[0].from_uid, 1);
         assert_eq!(state.applies[0].name, "aaa");
         assert_eq!(state.applies[1].from_uid, 3);
+    }
+
+    #[test]
+    fn login_with_real_uids_sends_and_approves_directly() {
+        // Primary path: server supplies uids in the login lists. A friend with a
+        // real uid sends immediately, and an apply with a real uid approves
+        // immediately — no push-learning needed.
+        let mut state = AppState::new();
+        state.login_succeeded(4, vec![Friend::new(1, "aaa".into())]);
+        state.seed_applies(vec![FriendApply { from_uid: 3, name: "bbb".into() }]);
+
+        // send to the friend whose uid came from login
+        assert_eq!(state.friends[0].id, 1);
+        state.sent_message("aaa", "hi".into());
+
+        // approve the apply using its server-supplied uid
+        let approved = state.approve_apply(3);
+        assert_eq!(approved, Some("bbb".to_string()));
+        assert!(state.friends.iter().any(|f| f.id == 3 && f.name == "bbb"));
     }
 
     #[test]

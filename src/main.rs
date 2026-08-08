@@ -67,7 +67,9 @@ fn main() -> Result<(), slint::PlatformError> {
             std::thread::Builder::new()
                 .name("net".into())
                 .spawn(move || {
-                    let out_rx = out_rx.lock().unwrap().take().expect("net thread spawned once");
+                    let Some(out_rx) = out_rx.lock().unwrap().take() else {
+                        return; // a net thread is already running — ignore repeat login clicks
+                    };
                     let rt = tokio::runtime::Builder::new_multi_thread()
                         .enable_all()
                         .build()
@@ -108,10 +110,16 @@ fn main() -> Result<(), slint::PlatformError> {
                     push_ui_from_state(&ui, &s);
                 }
             }
-            // Server friend list carries no uid, so touid is unknown (0) and
-            // the send is dropped rather than corrupting the conversation.
+            // Server friend list carries no uid, so touid is unknown (0) until an
+            // incoming push teaches us the mapping. Surface it rather than dropping.
             if touid == 0 {
+                if let Some(ui) = ui.upgrade() {
+                    ui.set_login_status(format!("无法发送给 {friend}:好友 uid 未知(尚未收到该好友的消息)").into());
+                }
                 return;
+            }
+            if let Some(ui) = ui.upgrade() {
+                ui.set_login_status("".into());
             }
             let _ = out_tx.lock().unwrap().send(NetCmd::SendText { touid, text });
         }
@@ -210,6 +218,10 @@ fn push_ui_from_state(ui: &MainWindow, s: &AppState) {
     let apply_names: Vec<slint::SharedString> =
         s.applies.iter().map(|a| slint::SharedString::from(a.name.clone())).collect();
 
+    let friend_names: Vec<slint::SharedString> =
+        s.friends.iter().map(|f| slint::SharedString::from(f.name.clone())).collect();
+
+    ui.set_friend_names(std::rc::Rc::new(slint::VecModel::from(friend_names)).into());
     ui.set_chat_messages(std::rc::Rc::new(slint::VecModel::from(messages)).into());
     ui.set_unread_flags(std::rc::Rc::new(slint::VecModel::from(unread_flags)).into());
     ui.set_apply_names(std::rc::Rc::new(slint::VecModel::from(apply_names)).into());
@@ -294,17 +306,17 @@ async fn handle_net_cmd(
         }
         NetCmd::Search { name } => {
             let req = SearchRequest::by_name(name.clone());
-            (Frame::new(protocol::SEARCH_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::SEARCH_REQUEST + 1)
+            (Frame::new(protocol::SEARCH_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::SEARCH_RESPONSE)
         }
         NetCmd::AddFriend { touid } => {
             let my_uid = state.lock().unwrap().my_uid;
             let req = AddFriendRequest { uid: my_uid, touid: *touid };
-            (Frame::new(protocol::ADD_FRIEND_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::ADD_FRIEND_REQUEST + 1)
+            (Frame::new(protocol::ADD_FRIEND_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::ADD_FRIEND_RESPONSE)
         }
         NetCmd::ApproveApply { fromuid } => {
             let my_uid = state.lock().unwrap().my_uid;
             let req = AuthFriendRequest { fromuid: my_uid, touid: *fromuid };
-            (Frame::new(protocol::AUTH_FRIEND_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::AUTH_FRIEND_REQUEST + 1)
+            (Frame::new(protocol::AUTH_FRIEND_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::AUTH_FRIEND_RESPONSE)
         }
     };
 
@@ -361,28 +373,19 @@ async fn handle_response_frame(
             let _ = frame;
         }
         NetCmd::Search { .. } => {
-            let outcome = match serde_json::from_slice::<UserInfo>(&frame.body) {
-                Ok(user) => SearchOutcome::Found(user),
-                Err(_) => {
-                    // server returns an error envelope on failure (e.g. the known
-                    // InvalidJson bug) — treat as "unavailable"
-                    if let Ok(SimpleResponse { error, .. }) = serde_json::from_slice::<SimpleResponse>(&frame.body) {
-                        if error == 0 {
-                            SearchOutcome::Unavailable("搜索无结果".into())
-                        } else {
-                            SearchOutcome::Unavailable("搜索不可用(服务端错误)".into())
-                        }
-                    } else {
-                        SearchOutcome::Unavailable("搜索响应解析失败".into())
-                    }
+            let outcome = match protocol::SearchResponse::from_body(&frame.body) {
+                Ok(protocol::SearchResponse::Found(user)) => SearchOutcome::Found(user),
+                Ok(protocol::SearchResponse::Error(e)) if e.error != 0 => {
+                    SearchOutcome::Unavailable("搜索不可用(服务端错误)".into())
                 }
+                _ => SearchOutcome::Unavailable("搜索无结果".into()),
             };
 
             match outcome {
                 SearchOutcome::Found(user) => {
+                    let is_friend = state.lock().unwrap().friends.iter().any(|f| f.id == user.id);
                     state.lock().unwrap().set_search_result(Some(Friend { id: user.id, name: user.name.clone() }));
                     let name = user.name.clone();
-                    let is_friend = state.lock().unwrap().friends.iter().any(|f| f.id == user.id);
                     let _ = ui.upgrade_in_event_loop(move |ui| {
                         ui.set_search_in_progress(false);
                         ui.set_search_result(name.into());
@@ -402,12 +405,10 @@ async fn handle_response_frame(
                 }
             }
         }
-        NetCmd::AddFriend { touid } => {
+        NetCmd::AddFriend { .. } => {
             let ok = serde_json::from_slice::<SimpleResponse>(&frame.body)
                 .map(|r| r.is_ok())
                 .unwrap_or(false);
-            let my_uid = state.lock().unwrap().my_uid;
-            let _ = (touid, my_uid);
             let msg = if ok { "申请已发送".to_string() } else { "加好友失败".to_string() };
             let _ = ui.upgrade_in_event_loop(move |ui| {
                 ui.set_search_status(msg.into());
@@ -417,24 +418,19 @@ async fn handle_response_frame(
             let ok = serde_json::from_slice::<SimpleResponse>(&frame.body)
                 .map(|r| r.is_ok())
                 .unwrap_or(false);
-            let approved = {
-                let mut s = state.lock().unwrap();
-                s.approve_apply(*fromuid)
-            };
-            let ui2 = ui.clone();
+            let fromuid = *fromuid;
             let state2 = Arc::clone(&state);
             let _ = ui.upgrade_in_event_loop(move |ui| {
                 if ok {
-                    if let Some(_name) = approved {
-                        let s = state2.lock().unwrap();
-                        ui.set_apply_status("已同意".into());
-                        push_ui_from_state(&ui, &s);
-                    }
+                    // remove the apply and add the friend (reducer), then refresh the UI
+                    state2.lock().unwrap().approve_apply(fromuid);
+                    ui.set_apply_status("已同意".into());
+                    let s = state2.lock().unwrap();
+                    push_ui_from_state(&ui, &s);
                 } else {
                     ui.set_apply_status("同意失败".into());
                 }
             });
-            let _ = ui2;
         }
     }
 }
@@ -462,14 +458,11 @@ fn handle_incoming_frame(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState
         Err(_) => return,
     };
 
-    let friend = {
-        let s = state.lock().unwrap();
-        s.friend_for_uid(text.fromuid)
-    };
     {
         let mut s = state.lock().unwrap();
         for item in &text.text_array {
-            s.received_message(&friend, item.content.clone());
+            // learns the sender's uid when unambiguous, then routes + marks unread
+            s.receive_push(text.fromuid, item.content.clone());
         }
     }
 
@@ -515,9 +508,14 @@ async fn do_login(
 
     let data = resp.data.ok_or_else(|| "登录响应缺少数据".to_string())?;
 
+    let apply_names: Vec<String> = data.apply_list.iter().map(|a| a.name.clone()).collect();
     let friends: Vec<Friend> =
         data.friend_list.into_iter().map(|f| Friend::from_name(f.name)).collect();
-    state.lock().unwrap().login_succeeded(data.uid, friends);
+    {
+        let mut s = state.lock().unwrap();
+        s.login_succeeded(data.uid, friends);
+        s.seed_applies(apply_names);
+    }
 
     Ok(conn)
 }

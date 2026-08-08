@@ -98,10 +98,18 @@ impl AppState {
 
     /// Record an incoming friend-apply push.
     pub fn apply_received(&mut self, from_uid: i64, name: String) {
-        if self.applies.iter().any(|a| a.from_uid == from_uid) {
+        if self.applies.iter().any(|a| a.name == name) {
             return;
         }
         self.applies.push(FriendApply { from_uid, name });
+    }
+
+    /// Seed pending applies from the login response (which carries names but
+    /// no uids). Uid is 0 until a 1011 push or search supplies it.
+    pub fn seed_applies(&mut self, names: Vec<String>) {
+        for name in names {
+            self.apply_received(0, name);
+        }
     }
 
     /// Approve a pending apply: remove it and add the user as a friend.
@@ -144,6 +152,28 @@ impl AppState {
     /// unmapped uid degrades to a readable `uid:N` label rather than dropping.
     pub fn friend_for_uid(&self, uid: i64) -> String {
         self.friend_name(uid).map(str::to_string).unwrap_or_else(|| format!("uid:{uid}"))
+    }
+
+    /// Route an incoming text push: learn the sender's uid if there is exactly
+    /// one friend with an unknown uid (login lists carry none), then deliver.
+    /// Returns the friend name the message was routed to.
+    pub fn receive_push(&mut self, from_uid: i64, text: String) -> String {
+        // Learn uid -> name when unambiguous: one friend whose uid is unknown.
+        if self.friend_name(from_uid).is_none() {
+            let unknown: Vec<usize> = self
+                .friends
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.id == 0)
+                .map(|(i, _)| i)
+                .collect();
+            if unknown.len() == 1 {
+                self.friends[unknown[0]].id = from_uid;
+            }
+        }
+        let friend = self.friend_for_uid(from_uid);
+        self.received_message(&friend, text);
+        friend
     }
 
     /// Open the conversation with `friend`; clears any unread marker.
@@ -255,6 +285,38 @@ mod tests {
     }
 
     #[test]
+    fn receive_push_learns_uid_and_routes_to_friend() {
+        let mut state = AppState::new();
+        state.login_succeeded(4, vec![Friend::from_name("aaa".into())]);
+
+        let friend = state.receive_push(1, "你好".into());
+        assert_eq!(friend, "aaa"); // learned uid 1 -> aaa
+        assert_eq!(state.friends[0].id, 1);
+
+        let conv = state.conversations.iter().find(|c| c.friend == "aaa").unwrap();
+        assert_eq!(conv.messages[0].text, "你好");
+        assert!(state.unread.contains(&"aaa".to_string()));
+    }
+
+    #[test]
+    fn receive_push_degrades_to_uid_label_when_ambiguous() {
+        let mut state = AppState::new();
+        state.login_succeeded(4, vec![Friend::from_name("aaa".into()), Friend::from_name("bbb".into())]);
+        // two unknown-uid friends -> can't learn, degrade to uid:N
+        let friend = state.receive_push(1, "hi".into());
+        assert_eq!(friend, "uid:1");
+    }
+
+    #[test]
+    fn reject_apply_removes_without_adding_friend() {
+        let mut state = AppState::new();
+        state.apply_received(3, "bbb".into());
+        state.reject_apply("bbb");
+        assert!(state.applies.is_empty());
+        assert!(!state.friends.iter().any(|f| f.id == 3));
+    }
+
+    #[test]
     fn sent_message_appends_to_open_conversation() {
         let mut state = AppState::new();
         state.open_conversation("aaa");
@@ -304,6 +366,16 @@ mod tests {
         assert_eq!(state.applies.len(), 1);
         assert_eq!(state.applies[0].from_uid, 3);
         assert_eq!(state.applies[0].name, "bbb");
+    }
+
+    #[test]
+    fn seed_applies_loads_login_apply_list() {
+        let mut state = AppState::new();
+        state.seed_applies(vec!["aaa".into(), "bbb".into()]);
+        assert_eq!(state.applies.len(), 2);
+        // login applies have no uid
+        assert_eq!(state.applies[0].from_uid, 0);
+        assert_eq!(state.applies[1].name, "bbb");
     }
 
     #[test]

@@ -8,9 +8,12 @@ use serde::{Deserialize, Serialize};
 pub const LOGIN_REQUEST: u32 = 1005;
 pub const LOGIN_RESPONSE: u32 = 1006;
 pub const SEARCH_REQUEST: u32 = 1007;
+pub const SEARCH_RESPONSE: u32 = 1008;
 pub const ADD_FRIEND_REQUEST: u32 = 1009;
+pub const ADD_FRIEND_RESPONSE: u32 = 1010;
 pub const NOTIFY_ADD_FRIEND: u32 = 1011;
 pub const AUTH_FRIEND_REQUEST: u32 = 1013;
+pub const AUTH_FRIEND_RESPONSE: u32 = 1014;
 pub const NOTIFY_AUTH_FRIEND: u32 = 1015;
 pub const TEXT_CHAT_REQUEST: u32 = 1017;
 pub const TEXT_CHAT_RESPONSE: u32 = 1018;
@@ -164,6 +167,23 @@ impl SearchRequest {
 pub struct UserInfo {
     pub id: i64,
     pub name: String,
+}
+
+/// 1008 search response: the server returns the raw `UserInfo` on success, or
+/// an error envelope on failure. Model both as one type.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SearchResponse {
+    Found(UserInfo),
+    Error(SimpleResponse),
+}
+
+impl SearchResponse {
+    pub fn from_body(body: &[u8]) -> Result<Self, serde_json::Error> {
+        if let Ok(user) = serde_json::from_slice::<UserInfo>(body) {
+            return Ok(SearchResponse::Found(user));
+        }
+        serde_json::from_slice::<SimpleResponse>(body).map(SearchResponse::Error)
+    }
 }
 
 /// 1009 add-friend request.
@@ -321,5 +341,26 @@ mod tests {
         assert!(ok.is_ok());
         let err: SimpleResponse = serde_json::from_str(r#"{"error":1011,"message":"UserNotFound"}"#).unwrap();
         assert!(!err.is_ok());
+    }
+
+    #[test]
+    fn search_response_parses_found_user() {
+        let resp = SearchResponse::from_body(br#"{"id":1,"name":"aaa","email":"x"}"#).unwrap();
+        match resp {
+            SearchResponse::Found(u) => {
+                assert_eq!(u.id, 1);
+                assert_eq!(u.name, "aaa");
+            }
+            SearchResponse::Error(_) => panic!("expected found"),
+        }
+    }
+
+    #[test]
+    fn search_response_parses_error_envelope() {
+        let resp = SearchResponse::from_body(br#"{"error":1011,"message":"UserNotFound"}"#).unwrap();
+        match resp {
+            SearchResponse::Found(_) => panic!("expected error"),
+            SearchResponse::Error(e) => assert_eq!(e.error, 1011),
+        }
     }
 }

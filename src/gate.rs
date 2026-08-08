@@ -10,15 +10,6 @@ pub struct GateLoginInfo {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct GateResponse {
-    pub status: i64,
-    #[serde(default)]
-    pub message: String,
-    #[serde(default)]
-    pub data: Option<GateLoginInfo>,
-}
-
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct VerifyCodeInfo {
     pub email: String,
@@ -36,10 +27,33 @@ pub enum GateError {
     Http(#[from] reqwest::Error),
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct GateResponse<T> {
+    pub status: i64,
+    #[serde(default)]
+    pub message: String,
+    pub data: Option<T>,
+}
+
+/// POST to a gate endpoint and deserialize the response into a typed `GateResponse<T>`.
+async fn post_json<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    gate_url: &str,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<GateResponse<T>, GateError> {
+    let resp = client
+        .post(format!("{}{}", gate_url.trim_end_matches('/'), path))
+        .json(body)
+        .send()
+        .await?;
+    resp.json().await.map_err(GateError::Http)
+}
+
 /// Log in via the gate server's HTTP `/user_login` endpoint.
 pub async fn user_login(gate_url: &str, user: &str, passwd: &str) -> Result<GateLoginInfo, GateError> {
     let client = reqwest::Client::new();
-    let parsed: GateResponse = post_json(
+    let parsed: GateResponse<GateLoginInfo> = post_json(
         &client,
         gate_url,
         "/user_login",
@@ -62,7 +76,7 @@ pub async fn register(
     verify_code: &str,
 ) -> Result<(), GateError> {
     let client = reqwest::Client::new();
-    let parsed: GateResponse = post_json(
+    let parsed: GateResponse<serde_json::Value> = post_json(
         &client,
         gate_url,
         "/user_register",
@@ -87,7 +101,7 @@ pub async fn reset_password(
     verify_code: &str,
 ) -> Result<(), GateError> {
     let client = reqwest::Client::new();
-    let parsed: GateResponse = post_json(
+    let parsed: GateResponse<serde_json::Value> = post_json(
         &client,
         gate_url,
         "/reset_password",
@@ -105,15 +119,7 @@ pub async fn reset_password(
 /// Request a verification code for an email.
 pub async fn get_verify_code(gate_url: &str, email: &str) -> Result<VerifyCodeInfo, GateError> {
     let client = reqwest::Client::new();
-    #[derive(Deserialize)]
-    struct VcResponse {
-        status: i64,
-        #[serde(default)]
-        message: String,
-        #[serde(default)]
-        data: Option<VerifyCodeInfo>,
-    }
-    let parsed: VcResponse = post_json(
+    let parsed: GateResponse<VerifyCodeInfo> = post_json(
         &client,
         gate_url,
         "/get_verify_code",
@@ -124,20 +130,6 @@ pub async fn get_verify_code(gate_url: &str, email: &str) -> Result<VerifyCodeIn
         return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
     }
     parsed.data.ok_or(GateError::MissingData)
-}
-
-async fn post_json<T: serde::de::DeserializeOwned>(
-    client: &reqwest::Client,
-    gate_url: &str,
-    path: &str,
-    body: &serde_json::Value,
-) -> Result<T, GateError> {
-    let resp = client
-        .post(format!("{}{}", gate_url.trim_end_matches('/'), path))
-        .json(body)
-        .send()
-        .await?;
-    resp.json().await.map_err(GateError::Http)
 }
 
 #[cfg(test)]

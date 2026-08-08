@@ -4,6 +4,22 @@
 // Layout folded from the Iffchat visual prototype.
 import { Button, LineEdit, ScrollView, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 
+// view-model rows crossing the UI seam — one struct per list row keeps the
+// name/preview/status fields index-aligned by construction (no parallel arrays)
+export struct ConversationRow {
+    name: string,
+    preview: string,
+    unread: int,
+}
+export struct ApplyRow {
+    name: string,
+    status: int,
+}
+export struct MessageRow {
+    mine: bool,
+    text: string,
+}
+
 export component MainWindow inherits Window {
     title: "Iffchat";
     // auth screen is a small window; enlarging to the full chat layout is a
@@ -27,13 +43,11 @@ export component MainWindow inherits Window {
     // friends
     in-out property <[string]> friend-names: [];
     in-out property <[int]> unread-flags: [];
-    // recent conversations
-    in-out property <[string]> conv-names: [];
-    in-out property <[string]> conv-previews: [];
-    in-out property <[int]> conv-unread: [];
+    // recent conversations (struct rows, index-aligned by construction)
+    in-out property <[ConversationRow]> conv-rows: [];
     // chat
     in-out property <string> selected-friend: "";
-    in-out property <[string]> chat-messages: [];
+    in-out property <[MessageRow]> chat-rows: [];
     in-out property <string> message-input: "";
     // search (filters the current list locally)
     in-out property <string> search-input: "";
@@ -45,8 +59,7 @@ export component MainWindow inherits Window {
     in-out property <bool> add-search-result-is-friend: false;
     in-out property <string> add-search-status: "";
     // friend applies
-    in-out property <[string]> apply-names: [];
-    in-out property <[int]> apply-statuses: [];
+    in-out property <[ApplyRow]> apply-rows: [];
     in-out property <string> apply-status: "";
 
     callback do-login();
@@ -206,24 +219,24 @@ export component MainWindow inherits Window {
                         padding: 6px;
                         spacing: 2px;
                         alignment: start;
-                        for name[idx] in root.conv-names : Rectangle {
+                        for row in root.conv-rows : Rectangle {
                             height: 58px;
                             border-radius: 6px;
-                            background: name == root.selected-friend ? #d9e7df : transparent;
-                            TouchArea { clicked => { root.select-friend(name); } }
+                            background: row.name == root.selected-friend ? #d9e7df : transparent;
+                            TouchArea { clicked => { root.select-friend(row.name); } }
                             VerticalLayout { alignment: center;
                                 HorizontalBox {
                                     padding: 8px;
                                     Rectangle { width: 38px; height: 38px; border-radius: 19px; background: #07c160; }
                                     Rectangle { width: 10px; }
                                     VerticalLayout {
-                                        Text { text: name; font-size: 14px; color: #222222; }
-                                        Text { text: idx < root.conv-previews.length ? root.conv-previews[idx] : ""; font-size: 12px; color: #999999; }
+                                        Text { text: row.name; font-size: 14px; color: #222222; }
+                                        Text { text: row.preview; font-size: 12px; color: #999999; }
                                     }
                                     Rectangle { horizontal-stretch: 1; }
-                                    if idx < root.conv-unread.length && root.conv-unread[idx] > 0 : Rectangle {
+                                    if row.unread > 0 : Rectangle {
                                         width: 18px; height: 18px; border-radius: 9px; background: #e64c3c;
-                                        Text { text: root.conv-unread[idx]; color: white; x: 6px; y: 3px; font-size: 10px; }
+                                        Text { text: row.unread; color: white; x: 6px; y: 3px; font-size: 10px; }
                                     }
                                 }
                             }
@@ -250,9 +263,9 @@ export component MainWindow inherits Window {
                                     Rectangle { width: 10px; }
                                     Text { text: "新的朋友"; font-size: 14px; color: #1d7a3c; }
                                     Rectangle { horizontal-stretch: 1; }
-                                    if root.apply-statuses.length > 0 : Rectangle {
+                                    if root.apply-rows.length > 0 : Rectangle {
                                         width: 18px; height: 18px; border-radius: 9px; background: #e64c3c;
-                                        Text { text: root.apply-statuses.length; color: white; x: 6px; y: 3px; font-size: 10px; }
+                                        Text { text: root.apply-rows.length; color: white; x: 6px; y: 3px; font-size: 10px; }
                                     }
                                 }
                             }
@@ -280,7 +293,7 @@ export component MainWindow inherits Window {
                         padding: 6px;
                         spacing: 2px;
                         alignment: start;
-                        for name[idx] in root.apply-names : Rectangle {
+                        for row in root.apply-rows : Rectangle {
                             height: 60px;
                             border-radius: 6px;
                             background: transparent;
@@ -290,19 +303,19 @@ export component MainWindow inherits Window {
                                     Rectangle { width: 38px; height: 38px; border-radius: 19px; background: #f5a623; }
                                     Rectangle { width: 10px; }
                                     VerticalLayout {
-                                        Text { text: name; font-size: 14px; color: #222222; }
+                                        Text { text: row.name; font-size: 14px; color: #222222; }
                                         Text { text: "请求添加你为好友"; font-size: 12px; color: #888888; }
                                     }
                                     Rectangle { horizontal-stretch: 1; }
-                                    if idx < root.apply-statuses.length && root.apply-statuses[idx] == 1 : Text {
+                                    if row.status == 1 : Text {
                                         text: "已添加"; font-size: 13px; color: #999999; vertical-alignment: center;
                                     }
-                                    if idx < root.apply-statuses.length && root.apply-statuses[idx] == 0 : VerticalBox {
+                                    if row.status == 0 : VerticalBox {
                                         alignment: center;
                                         HorizontalBox {
                                             spacing: 4px;
-                                            Button { text: "拒绝"; width: 44px; clicked => { root.reject-apply(name); } }
-                                            Button { text: "同意"; width: 44px; clicked => { root.approve-apply(name); } }
+                                            Button { text: "拒绝"; width: 44px; clicked => { root.reject-apply(row.name); } }
+                                            Button { text: "同意"; width: 44px; clicked => { root.approve-apply(row.name); } }
                                         }
                                     }
                                 }
@@ -337,13 +350,16 @@ export component MainWindow inherits Window {
                         padding: 16px;
                         spacing: 12px;
                         alignment: start;
-                        for msg in root.chat-messages : Rectangle {
-                            background: #eef1f4;
-                            border-radius: 10px;
-                            width: 420px;
-                            VerticalBox {
-                                padding: 8px;
-                                Text { text: msg; font-size: 13px; color: #333333; }
+                        for msg in root.chat-rows : HorizontalBox {
+                            alignment: msg.mine ? end : start;
+                            Rectangle {
+                                background: msg.mine ? #07c160 : #ffffff;
+                                border-radius: 10px;
+                                width: 420px;
+                                VerticalBox {
+                                    padding: 8px;
+                                    Text { text: msg.text; font-size: 13px; color: msg.mine ? white : #333333; }
+                                }
                             }
                         }
                     }

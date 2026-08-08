@@ -1,6 +1,7 @@
 slint::include_modules!();
 
 mod app;
+mod client;
 mod connection;
 mod gate;
 mod net_loop;
@@ -10,7 +11,7 @@ mod ui_bridge;
 use std::sync::{Arc, Mutex};
 
 use app::AppState;
-use net_loop::NetCmd;
+use client::NetCmd;
 use ui_bridge::push_ui_from_state;
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -83,18 +84,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 Some(ui) => (ui.get_server_host().to_string(), ui.get_email().to_string()),
                 None => return,
             };
-            let weak = ui.clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
-                let result = rt.block_on(gate::get_verify_code(&gate_url(&server_host), &email));
-                let msg = match result {
-                    // The server's mailer is not wired up, so it echoes a
-                    // placeholder code; surface it so the flow is usable in test.
+            spawn_gate(&ui, false, move |rt| {
+                // The server's mailer is not wired up, so it echoes a placeholder
+                // code; surface it so the flow is usable in test.
+                match rt.block_on(gate::get_verify_code(&gate_url(&server_host), &email)) {
                     Ok(info) if info.code.is_empty() => format!("验证码已发送至 {}", info.email),
                     Ok(info) => format!("验证码: {} (测试环境,请勿外传)", info.code),
                     Err(e) => format!("获取验证码失败: {e}"),
-                };
-                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_login_status(msg.into()));
+                }
             });
         }
     });
@@ -120,23 +117,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
-            let weak = ui.clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
-                let result = rt.block_on(gate::register(
+            spawn_gate(&ui, true, move |rt| {
+                match rt.block_on(gate::register(
                     &gate_url(&server_host), &user, &email, &passwd, &confirm, &code,
-                ));
-                let msg = match result {
+                )) {
                     Ok(()) => "注册成功,请登录".to_string(),
                     Err(e) => format!("注册失败: {e}"),
-                };
-                let switch_to_login = msg.starts_with("注册成功");
-                let _ = weak.upgrade_in_event_loop(move |ui| {
-                    ui.set_login_status(msg.into());
-                    if switch_to_login {
-                        ui.set_auth_mode(0);
-                    }
-                });
+                }
             });
         }
     });
@@ -155,21 +142,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 None => return,
             };
             let (server_host, user, email, passwd, code) = fields;
-            let weak = ui.clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
-                let result = rt.block_on(gate::reset_password(&gate_url(&server_host), &user, &email, &passwd, &code));
-                let msg = match result {
+            spawn_gate(&ui, true, move |rt| {
+                match rt.block_on(gate::reset_password(&gate_url(&server_host), &user, &email, &passwd, &code)) {
                     Ok(()) => "密码已重置,请登录".to_string(),
                     Err(e) => format!("重置失败: {e}"),
-                };
-                let switch_to_login = msg.starts_with("密码已重置");
-                let _ = weak.upgrade_in_event_loop(move |ui| {
-                    ui.set_login_status(msg.into());
-                    if switch_to_login {
-                        ui.set_auth_mode(0);
-                    }
-                });
+                }
             });
         }
     });
@@ -308,4 +285,25 @@ fn gate_url(server_host: &str) -> String {
         Some((host, port)) if port != 0 => format!("http://{host}:{port}"),
         _ => String::new(),
     }
+}
+
+/// Run a gate HTTP call on a short-lived thread and push the result string
+/// back onto the UI thread. `switch_to_login` (when true) flips the auth screen
+/// back to login mode after the message is shown.
+fn spawn_gate(
+    ui: &slint::Weak<MainWindow>,
+    switch_to_login: bool,
+    work: impl FnOnce(&tokio::runtime::Runtime) -> String + Send + 'static,
+) {
+    let weak = ui.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
+        let msg = work(&rt);
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            ui.set_login_status(msg.into());
+            if switch_to_login {
+                ui.set_auth_mode(0);
+            }
+        });
+    });
 }

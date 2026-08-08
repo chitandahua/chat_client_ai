@@ -1,6 +1,8 @@
 // Async TCP connection to the chat server — Seam 3.
 // Owns the socket; sends typed frames and reads framed responses.
 use crate::protocol::{decode_frame, encode_frame, Frame, ProtocolError};
+use std::future::Future;
+use std::pin::Pin;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -14,6 +16,15 @@ pub enum ConnectionError {
     Eof,
 }
 
+/// The seam the dispatch core (net_loop) talks through. A concrete
+/// `TcpConnection` implements it for real sockets; tests implement a mock.
+/// Two adapters at this seam makes it a real seam.
+pub trait NetConnection {
+    fn send(&mut self, frame: &Frame) -> Pin<Box<dyn Future<Output = Result<(), ConnectionError>> + Send + '_>>;
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Result<Frame, ConnectionError>> + Send + '_>>;
+}
+
+/// Concrete TCP connection.
 pub struct Connection {
     stream: TcpStream,
 }
@@ -23,24 +34,6 @@ impl Connection {
     pub async fn connect(host: &str, port: u16) -> Result<Self, ConnectionError> {
         let stream = TcpStream::connect((host, port)).await?;
         Ok(Self { stream })
-    }
-
-    /// Send one typed frame.
-    pub async fn send(&mut self, frame: &Frame) -> Result<(), ConnectionError> {
-        let wire = encode_frame(frame)?;
-        self.stream.write_all(&wire).await?;
-        Ok(())
-    }
-
-    /// Read one complete frame. Returns the raw frame; the caller decodes the body.
-    pub async fn recv(&mut self) -> Result<Frame, ConnectionError> {
-        let mut header = [0u8; 6];
-        self.read_exact(&mut header).await?;
-        let len = u16::from_be_bytes([header[4], header[5]]) as usize;
-        let mut buf = vec![0u8; 6 + len];
-        buf[..6].copy_from_slice(&header);
-        self.read_exact(&mut buf[6..]).await?;
-        Ok(decode_frame(&buf)?)
     }
 
     async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), ConnectionError> {
@@ -63,6 +56,33 @@ impl Connection {
         .unwrap();
         self.send(&Frame::new(crate::protocol::LOGIN_REQUEST, body)).await?;
         self.recv().await
+    }
+}
+
+impl NetConnection for Connection {
+    fn send(&mut self, frame: &Frame) -> Pin<Box<dyn Future<Output = Result<(), ConnectionError>> + Send + '_>> {
+        // Encode before entering the async block so the future borrows only
+        // `self`, not `frame` (which has a shorter lifetime).
+        let wire = match encode_frame(frame) {
+            Ok(w) => w,
+            Err(e) => return Box::pin(async move { Err(ConnectionError::Protocol(e)) }),
+        };
+        Box::pin(async move {
+            self.stream.write_all(&wire).await?;
+            Ok(())
+        })
+    }
+
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Result<Frame, ConnectionError>> + Send + '_>> {
+        Box::pin(async move {
+            let mut header = [0u8; 6];
+            self.read_exact(&mut header).await?;
+            let len = u16::from_be_bytes([header[4], header[5]]) as usize;
+            let mut buf = vec![0u8; 6 + len];
+            buf[..6].copy_from_slice(&header);
+            self.read_exact(&mut buf[6..]).await?;
+            Ok(decode_frame(&buf)?)
+        })
     }
 }
 

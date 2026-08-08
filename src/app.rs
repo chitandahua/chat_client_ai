@@ -146,6 +146,31 @@ impl AppState {
         self.friends.iter().find(|f| f.id == uid).map(|f| f.name.as_str())
     }
 
+    /// Resolve a friend name to its uid, if known.
+    pub fn friend_uid(&self, name: &str) -> Option<i64> {
+        self.friends.iter().find(|f| f.name == name).map(|f| f.id)
+    }
+
+    /// Whether a uid is already a friend.
+    pub fn is_friend(&self, uid: i64) -> bool {
+        self.friends.iter().any(|f| f.id == uid)
+    }
+
+    /// Whether a friend name currently has unread messages.
+    pub fn is_unread(&self, name: &str) -> bool {
+        self.unread.iter().any(|u| u == name)
+    }
+
+    /// The conversation with a friend, if one exists.
+    pub fn conversation(&self, friend: &str) -> Option<&Conversation> {
+        self.conversations.iter().find(|c| c.friend == friend)
+    }
+
+    /// The uid of the last search result, if any.
+    pub fn search_uid(&self) -> Option<i64> {
+        self.search_result.as_ref().map(|f| f.id)
+    }
+
     /// Attribute an incoming push to a friend name. The login friend list
     /// carries uids, so an unmapped uid means a sender we haven't met yet;
     /// degrade to a readable `uid:N` label rather than dropping.

@@ -229,6 +229,9 @@ impl SimpleResponse {
     }
 }
 
+/// 1018 text-chat response — same `{"error","message"}` envelope.
+pub type TextChatResponse = SimpleResponse;
+
 #[cfg(test)]
 mod tests {
     use super::*;

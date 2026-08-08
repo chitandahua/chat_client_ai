@@ -7,6 +7,14 @@ use serde::{Deserialize, Serialize};
 
 pub const LOGIN_REQUEST: u32 = 1005;
 pub const LOGIN_RESPONSE: u32 = 1006;
+pub const SEARCH_REQUEST: u32 = 1007;
+pub const ADD_FRIEND_REQUEST: u32 = 1009;
+pub const NOTIFY_ADD_FRIEND: u32 = 1011;
+pub const AUTH_FRIEND_REQUEST: u32 = 1013;
+pub const NOTIFY_AUTH_FRIEND: u32 = 1015;
+pub const TEXT_CHAT_REQUEST: u32 = 1017;
+pub const TEXT_CHAT_RESPONSE: u32 = 1018;
+pub const NOTIFY_TEXT_CHAT: u32 = 1019;
 
 pub const PREFIX_LEN: usize = 6;
 pub const MAX_BODY_LEN: usize = 1024;
@@ -104,6 +112,31 @@ pub struct LoginResponse {
     pub data: Option<LoginData>,
 }
 
+// ---- Text chat messages ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TextChatData {
+    pub msgid: i64,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TextChatRequest {
+    pub fromuid: i64,
+    pub touid: i64,
+    pub text_array: Vec<TextChatData>,
+}
+
+/// A text message delivered by the server. Because of a known server quirk
+/// (same-server delivery uses 1015 instead of 1019), incoming text must be
+/// parsed from BOTH notify ids — the body shape is identical.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IncomingText {
+    pub fromuid: i64,
+    pub touid: i64,
+    pub text_array: Vec<TextChatData>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +191,32 @@ mod tests {
             decode_frame(&wire[..wire.len() - 1]),
             Err(ProtocolError::Truncated { declared: 2, available: 1 })
         );
+    }
+
+    #[test]
+    fn text_chat_request_serializes_with_msgid_content() {
+        let req = TextChatRequest {
+            fromuid: 4,
+            touid: 1,
+            text_array: vec![TextChatData { msgid: 1, content: "hi".into() }],
+        };
+        let wire = encode_frame(&Frame::new(TEXT_CHAT_REQUEST, serde_json::to_vec(&req).unwrap())).unwrap();
+        assert_eq!(&wire[0..4], &1017u32.to_be_bytes());
+
+        let parsed: TextChatRequest = serde_json::from_slice(&wire[6..]).unwrap();
+        assert_eq!(parsed, req);
+    }
+
+    #[test]
+    fn incoming_text_parses_from_both_1015_and_1019() {
+        let body = br#"{"fromuid":1,"touid":4,"text_array":[{"msgid":1,"content":"hi"}]}"#.to_vec();
+        for id in [NOTIFY_TEXT_CHAT, NOTIFY_AUTH_FRIEND] {
+            let wire = encode_frame(&Frame::new(id, body.clone())).unwrap();
+            let frame = decode_frame(&wire).unwrap();
+            let parsed: IncomingText = serde_json::from_slice(&frame.body).unwrap();
+            assert_eq!(parsed.fromuid, 1);
+            assert_eq!(parsed.touid, 4);
+            assert_eq!(parsed.text_array[0].content, "hi");
+        }
     }
 }

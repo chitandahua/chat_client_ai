@@ -1,5 +1,4 @@
-// Login screen + main window. Tickets 1-2: real login via gate + chat server,
-// main window shows the friend list from the login response. Chat pane lands in ticket 3.
+// Login screen + main window. Tickets 1-3: real login, friend list, 1:1 text chat.
 import { Button, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 
 export component MainWindow inherits Window {
@@ -14,8 +13,14 @@ export component MainWindow inherits Window {
     in-out property <string> login-status: "";
     in-out property <bool> logged-in: false;
     in-out property <[string]> friend-names: [];
+    in-out property <[int]> unread-flags: [];
+    in-out property <string> selected-friend: "";
+    in-out property <[string]> chat-messages: [];
+    in-out property <string> message-input: "";
 
     callback do-login();
+    callback select-friend(string);
+    callback send-text(string, string);
 
     // ============================ LOGIN SCREEN ============================
     if !root.logged-in : Rectangle {
@@ -63,31 +68,67 @@ export component MainWindow inherits Window {
             width: 240px;
             background: #f5f6f7;
             VerticalBox {
-                padding: 8px;
-                spacing: 4px;
                 Rectangle { height: 36px; Text { text: "好友"; font-size: 15px; font-weight: 600; color: #333333; x: 8px; y: 10px; } }
-                for name in root.friend-names : Rectangle {
-                    height: 40px;
+                for name[idx] in root.friend-names : Rectangle {
+                    height: 44px;
                     border-radius: 8px;
-                    background: #e8f5ee;
+                    background: name == root.selected-friend ? #d9e7df : #f5f6f7;
+                    TouchArea {
+                        clicked => { root.select-friend(name); }
+                    }
                     HorizontalBox {
                         padding-left: 12px;
-                        Rectangle { width: 24px; height: 24px; y: 8px; border-radius: 12px; background: #07c160; }
+                        Rectangle { width: 28px; height: 28px; y: 8px; border-radius: 14px; background: #07c160; }
                         Rectangle { width: 8px; }
-                        Text { text: name; y: 11px; font-size: 14px; color: #333333; }
+                        Text {
+                            text: name;
+                            y: 14px;
+                            font-size: 14px;
+                            color: #333333;
+                            font-weight: name == root.selected-friend ? 600 : 400;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if idx < root.unread-flags.length && root.unread-flags[idx] == 1 : Rectangle {
+                            width: 10px; height: 10px; y: 17px; border-radius: 5px; background: #e64c3c;
+                        }
                     }
                 }
             }
         }
         Rectangle { width: 1px; height: 100%; background: #e3e6ea; }
-        Rectangle {
+        VerticalBox {
             horizontal-stretch: 1;
-            background: #ffffff;
-            VerticalBox {
-                Rectangle {
-                    height: 48px;
-                    background: #f3f5f7;
-                    Text { text: "选择一个好友开始聊天"; font-size: 14px; color: #999999; x: 16px; y: 16px; }
+            Rectangle {
+                height: 48px;
+                background: #f3f5f7;
+                Text { text: "与 " + root.selected-friend + " 的对话"; font-size: 15px; font-weight: 600; x: 16px; y: 16px; color: #333333; }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #ffffff;
+                VerticalBox {
+                    padding: 12px;
+                    spacing: 8px;
+                    for msg in root.chat-messages : Rectangle {
+                        background: #f0f2f5;
+                        border-radius: 6px;
+                        Text { text: msg; font-size: 14px; color: #444444; x: 10px; y: 8px; }
+                    }
+                }
+            }
+            HorizontalBox {
+                padding: 10px;
+                spacing: 8px;
+                LineEdit {
+                    horizontal-stretch: 1;
+                    placeholder-text: "输入消息…";
+                    text: root.message-input;
+                    edited(text) => { root.message-input = text; }
+                    accepted => { if root.message-input != "" { root.send-text(root.selected-friend, root.message-input); root.message-input = ""; } }
+                }
+                Button {
+                    text: "发送";
+                    clicked => { if root.message-input != "" { root.send-text(root.selected-friend, root.message-input); root.message-input = ""; } }
                 }
             }
         }

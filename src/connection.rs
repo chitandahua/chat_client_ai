@@ -127,4 +127,53 @@ mod tests {
         let err = Connection::connect("127.0.0.1", port).await.err().unwrap();
         assert!(matches!(err, ConnectionError::Io(_)));
     }
+
+    /// Mock server that answers login then pushes an incoming-text frame (1019).
+    async fn mock_server_with_text_push() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            // read login request, ignore
+            let mut header = [0u8; 6];
+            let _ = sock.read_exact(&mut header).await;
+            let len = u16::from_be_bytes([header[4], header[5]]) as usize;
+            let mut body = vec![0u8; len];
+            let _ = sock.read_exact(&mut body).await;
+
+            // login response 1006
+            let login_rsp = json!({
+                "data": {"apply_list": [], "friend_list": [{"name":"aaa","back":""}], "name":"ssss", "token":"tok", "uid":4},
+                "message": "",
+                "status": 0
+            })
+            .to_string();
+            let _ = sock
+                .write_all(&encode_frame(&Frame::new(LOGIN_RESPONSE, login_rsp.into_bytes())).unwrap())
+                .await;
+
+            // then push an incoming text frame 1019
+            let push = r#"{"fromuid":1,"touid":4,"text_array":[{"msgid":1,"content":"hi"}]}"#.to_string();
+            let _ = sock
+                .write_all(&encode_frame(&Frame::new(crate::protocol::NOTIFY_TEXT_CHAT, push.into_bytes())).unwrap())
+                .await;
+        });
+
+        port
+    }
+
+    #[tokio::test]
+    async fn recv_streams_pushes_after_login() {
+        let port = mock_server_with_text_push().await;
+        let mut conn = Connection::connect("127.0.0.1", port).await.unwrap();
+        let login = conn.login(4, "tok").await.unwrap();
+        assert_eq!(login.id, LOGIN_RESPONSE);
+
+        // connection stays alive: read the pushed text frame
+        let push = conn.recv().await.unwrap();
+        assert_eq!(push.id, crate::protocol::NOTIFY_TEXT_CHAT);
+        let text: crate::protocol::IncomingText = serde_json::from_slice(&push.body).unwrap();
+        assert_eq!(text.text_array[0].content, "hi");
+    }
 }

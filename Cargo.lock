@@ -765,7 +765,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "chat-gui-prototype"
+name = "chat-gui"
 version = "0.1.0"
 dependencies = [
  "slint",

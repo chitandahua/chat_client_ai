@@ -1,0 +1,36 @@
+// Login screen — ticket 1. No network attached yet; the login button only
+// sets a status message via the do-login callback.
+import { Button, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "Chat";
+    width: 420px;
+    height: 520px;
+    background: #ffffff;
+
+    in-out property <string> login-status: "";
+
+    callback do-login();
+
+    VerticalBox {
+        padding: 32px;
+        spacing: 12px;
+        alignment: center;
+
+        Text { text: "Chat"; font-size: 30px; font-weight: 700; color: #07c160; horizontal-alignment: center; }
+        Text { text: "连接服务器并登录"; font-size: 13px; color: #888888; horizontal-alignment: center; }
+
+        Rectangle { height: 12px; }
+
+        LineEdit { placeholder-text: "服务器 host:port"; text: "127.0.0.1:10086"; }
+        LineEdit { placeholder-text: "用户名"; text: "ssss"; }
+        LineEdit { placeholder-text: "密码"; input-type: password; }
+
+        Button {
+            text: "登录";
+            clicked => { root.do-login(); }
+        }
+
+        Text { text: root.login-status; color: #e64c3c; font-size: 12px; horizontal-alignment: center; }
+    }
+}

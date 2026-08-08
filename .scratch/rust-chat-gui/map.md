@@ -18,6 +18,7 @@ A cross-platform (Linux + Windows) Rust + Slint desktop chat client for the exis
 
 - [Slint async event-loop integration patterns](issues/01-research-slint-async-integration.md) — slint 1.17.1; background multi-threaded tokio runtime + `Weak::upgrade_in_event_loop` for network→UI, `.slint` callbacks + mpsc for UI→network; no `AsyncComponentRunner`/`#[callback]`; spawn_local needs `async_compat::Compat`.
 - [Windows build strategy for a Rust + Slint app](issues/02-research-windows-build-strategy.md) — winit is Windows-ready by default; build on a real Windows/MSVC box, or cargo-xwin / GNU-mingw cross from Linux; GNU can't use Skia → FemtoVG/software renderer; record `windows_subsystem`, VC redist vs `+crt-static`, `/STACK:8000000`.
+- [Stand up the chat_project backend stack locally](issues/03-task-stand-up-backend.md) — full stack running locally (MariaDB 3306, Redis 6379, gate 10086, status 10088, chat 18080/18081); login + text-chat verified over the wire. 7 suspected server bugs recorded in [research/backend-bugs.md](research/backend-bugs.md) and NOT fixed (search 1007 InvalidJson, 1015-vs-1019 notify id, no friend-list refresh, offline drops, etc.) — separate tests/review effort later.
 
 ## Not yet specified
 

@@ -14,6 +14,11 @@ export component MainWindow inherits Window {
     in-out property <string> password: "";
     in-out property <string> login-status: "";
     in-out property <bool> logged-in: false;
+    // auth: 0 = login, 1 = register, 2 = reset password
+    in-out property <int> auth-mode: 0;
+    in-out property <string> email: "";
+    in-out property <string> confirm-password: "";
+    in-out property <string> verify-code: "";
     in-out property <[string]> friend-names: [];
     in-out property <[int]> unread-flags: [];
     in-out property <string> selected-friend: "";
@@ -30,6 +35,10 @@ export component MainWindow inherits Window {
     in-out property <string> apply-status: "";
 
     callback do-login();
+    callback do-register();
+    callback do-reset-password();
+    callback request-verify-code();
+    callback set-auth-mode(int);
     callback select-friend(string);
     callback send-text(string, string);
     callback search-user(string);
@@ -37,20 +46,23 @@ export component MainWindow inherits Window {
     callback approve-apply(string);
     callback reject-apply(string);
 
-    // ============================ LOGIN SCREEN ============================
+    // ============================ AUTH SCREEN (login / register / reset) ============================
     if !root.logged-in : Rectangle {
         background: #ffffff;
         VerticalBox {
-            width: 380px;
-            x: (parent.width - 380px) / 2;
-            y: (parent.height - 340px) / 2;
-            padding: 32px;
-            spacing: 12px;
+            width: 400px;
+            x: (parent.width - 400px) / 2;
+            y: (parent.height - 430px) / 2;
+            padding: 28px;
+            spacing: 10px;
 
             Text { text: "Chat"; font-size: 30px; font-weight: 700; color: #07c160; horizontal-alignment: center; }
-            Text { text: "连接服务器并登录"; font-size: 13px; color: #888888; horizontal-alignment: center; }
+            Text {
+                text: root.auth-mode == 0 ? "登录" : (root.auth-mode == 1 ? "注册新账号" : "重置密码");
+                font-size: 13px; color: #888888; horizontal-alignment: center;
+            }
 
-            Rectangle { height: 12px; }
+            Rectangle { height: 8px; }
 
             LineEdit {
                 placeholder-text: "服务器 host:port";
@@ -62,15 +74,50 @@ export component MainWindow inherits Window {
                 text: root.username;
                 edited(text) => { root.username = text; }
             }
-            LineEdit {
+            if root.auth-mode != 0 : LineEdit {
+                placeholder-text: "邮箱";
+                text: root.email;
+                edited(text) => { root.email = text; }
+            }
+            if root.auth-mode != 0 : HorizontalBox {
+                spacing: 4px;
+                LineEdit {
+                    horizontal-stretch: 1;
+                    placeholder-text: "验证码";
+                    text: root.verify-code;
+                    edited(text) => { root.verify-code = text; }
+                }
+                Button { text: "获取验证码"; clicked => { root.request-verify-code(); } }
+            }
+            if root.auth-mode == 1 : LineEdit {
                 placeholder-text: "密码";
                 text: root.password;
                 edited(text) => { root.password = text; }
             }
+            if root.auth-mode == 1 : LineEdit {
+                placeholder-text: "确认密码";
+                text: root.confirm-password;
+                edited(text) => { root.confirm-password = text; }
+            }
+            if root.auth-mode == 2 : LineEdit {
+                placeholder-text: "新密码";
+                text: root.password;
+                edited(text) => { root.password = text; }
+            }
 
-            Button {
-                text: "登录";
-                clicked => { root.do-login(); }
+            Rectangle { height: 4px; }
+
+            if root.auth-mode == 0 : Button { text: "登录"; clicked => { root.do-login(); } }
+            if root.auth-mode == 1 : Button { text: "注册"; clicked => { root.do-register(); } }
+            if root.auth-mode == 2 : Button { text: "重置密码"; clicked => { root.do-reset-password(); } }
+
+            Rectangle { height: 2px; }
+            HorizontalBox {
+                alignment: center;
+                spacing: 6px;
+                Button { text: "登录"; clicked => { root.set-auth-mode(0); } }
+                Button { text: "注册"; clicked => { root.set-auth-mode(1); } }
+                Button { text: "重置密码"; clicked => { root.set-auth-mode(2); } }
             }
 
             Text { text: root.login-status; color: #e64c3c; font-size: 12px; horizontal-alignment: center; }
@@ -219,12 +266,16 @@ export component MainWindow inherits Window {
                 ScrollView {
                     width: 100%; height: 100%;
                     VerticalBox {
-                        padding: 12px;
-                        spacing: 10px;
+                        padding: 14px;
+                        spacing: 8px;
                         for msg in root.chat-messages : Rectangle {
-                            background: #f0f2f5;
-                            border-radius: 8px;
-                            Text { text: msg; font-size: 14px; color: #333333; x: 10px; y: 8px; }
+                            background: #eef1f4;
+                            border-radius: 10px;
+                            width: 420px;
+                            VerticalBox {
+                                padding: 8px;
+                                Text { text: msg; font-size: 13px; color: #333333; }
+                            }
                         }
                     }
                 }

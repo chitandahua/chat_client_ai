@@ -1,4 +1,4 @@
-// Gate HTTP client — POST /user_login → {id, user, token, host, port}.
+// Gate HTTP client — login, register, reset password, get verify code.
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -19,6 +19,13 @@ struct GateResponse {
     pub data: Option<GateLoginInfo>,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct VerifyCodeInfo {
+    pub email: String,
+    #[serde(default)]
+    pub code: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GateError {
     #[error("gate returned status {status}: {message}")]
@@ -32,17 +39,105 @@ pub enum GateError {
 /// Log in via the gate server's HTTP `/user_login` endpoint.
 pub async fn user_login(gate_url: &str, user: &str, passwd: &str) -> Result<GateLoginInfo, GateError> {
     let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{}/user_login", gate_url.trim_end_matches('/')))
-        .json(&serde_json::json!({ "user": user, "passwd": passwd }))
-        .send()
-        .await?;
-
-    let parsed: GateResponse = resp.json().await?;
+    let parsed: GateResponse = post_json(
+        &client,
+        gate_url,
+        "/user_login",
+        &serde_json::json!({ "user": user, "passwd": passwd }),
+    )
+    .await?;
     if parsed.status != 0 {
         return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
     }
     parsed.data.ok_or(GateError::MissingData)
+}
+
+/// Register a new account. Server requires a valid verify code for the email.
+pub async fn register(
+    gate_url: &str,
+    user: &str,
+    email: &str,
+    passwd: &str,
+    confirm_passwd: &str,
+    verify_code: &str,
+) -> Result<(), GateError> {
+    let client = reqwest::Client::new();
+    let parsed: GateResponse = post_json(
+        &client,
+        gate_url,
+        "/user_register",
+        &serde_json::json!({
+            "user": user, "email": email, "passwd": passwd,
+            "confirm_passwd": confirm_passwd, "verify_code": verify_code,
+        }),
+    )
+    .await?;
+    if parsed.status != 0 {
+        return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
+    }
+    Ok(())
+}
+
+/// Reset a password using an email verify code.
+pub async fn reset_password(
+    gate_url: &str,
+    user: &str,
+    email: &str,
+    passwd: &str,
+    verify_code: &str,
+) -> Result<(), GateError> {
+    let client = reqwest::Client::new();
+    let parsed: GateResponse = post_json(
+        &client,
+        gate_url,
+        "/reset_password",
+        &serde_json::json!({
+            "user": user, "email": email, "passwd": passwd, "verify_code": verify_code,
+        }),
+    )
+    .await?;
+    if parsed.status != 0 {
+        return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
+    }
+    Ok(())
+}
+
+/// Request a verification code for an email.
+pub async fn get_verify_code(gate_url: &str, email: &str) -> Result<VerifyCodeInfo, GateError> {
+    let client = reqwest::Client::new();
+    #[derive(Deserialize)]
+    struct VcResponse {
+        status: i64,
+        #[serde(default)]
+        message: String,
+        #[serde(default)]
+        data: Option<VerifyCodeInfo>,
+    }
+    let parsed: VcResponse = post_json(
+        &client,
+        gate_url,
+        "/get_verify_code",
+        &serde_json::json!({ "email": email }),
+    )
+    .await?;
+    if parsed.status != 0 {
+        return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
+    }
+    parsed.data.ok_or(GateError::MissingData)
+}
+
+async fn post_json<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    gate_url: &str,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<T, GateError> {
+    let resp = client
+        .post(format!("{}{}", gate_url.trim_end_matches('/'), path))
+        .json(body)
+        .send()
+        .await?;
+    resp.json().await.map_err(GateError::Http)
 }
 
 #[cfg(test)]
@@ -121,5 +216,26 @@ mod tests {
             }
             other => panic!("expected GateRejected, got {:?}", other.map(|_| ())),
         }
+    }
+
+    #[tokio::test]
+    async fn register_success_returns_ok() {
+        let url = mock_http_server(0, "Ok").await;
+        register(&url, "carol", "c@x.com", "pw", "pw", "code").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn register_rejected_on_mismatched_verify_code() {
+        let url = mock_http_server(6, "Invalid verify code").await;
+        match register(&url, "carol", "c@x.com", "pw", "pw", "bad").await {
+            Err(GateError::GateRejected { status, .. }) => assert_eq!(status, 6),
+            other => panic!("expected rejection, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[tokio::test]
+    async fn reset_password_success_returns_ok() {
+        let url = mock_http_server(0, "Ok").await;
+        reset_password(&url, "ssss", "s@x.com", "newpw", "code").await.unwrap();
     }
 }

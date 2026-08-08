@@ -64,6 +64,113 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    ui.on_set_auth_mode({
+        let ui = ui.as_weak();
+        move |mode| {
+            if let Some(ui) = ui.upgrade() {
+                ui.set_auth_mode(mode);
+                ui.set_login_status("".into());
+            }
+        }
+    });
+
+    // Register / reset-password / verify-code run a short-lived HTTP-only
+    // thread (no chat socket), pushing the result back onto the UI thread.
+    ui.on_request_verify_code({
+        let ui = ui.as_weak();
+        move || {
+            let (server_host, email) = match ui.upgrade() {
+                Some(ui) => (ui.get_server_host().to_string(), ui.get_email().to_string()),
+                None => return,
+            };
+            let weak = ui.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
+                let result = rt.block_on(gate::get_verify_code(&gate_url(&server_host), &email));
+                let msg = match result {
+                    Ok(info) => format!("验证码已发送至 {}", info.email),
+                    Err(e) => format!("获取验证码失败: {e}"),
+                };
+                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_login_status(msg.into()));
+            });
+        }
+    });
+
+    ui.on_do_register({
+        let ui = ui.as_weak();
+        move || {
+            let fields = match ui.upgrade() {
+                Some(ui) => (
+                    ui.get_server_host().to_string(),
+                    ui.get_username().to_string(),
+                    ui.get_email().to_string(),
+                    ui.get_password().to_string(),
+                    ui.get_confirm_password().to_string(),
+                    ui.get_verify_code().to_string(),
+                ),
+                None => return,
+            };
+            let (server_host, user, email, passwd, confirm, code) = fields;
+            if passwd != confirm {
+                if let Some(ui) = ui.upgrade() {
+                    ui.set_login_status("两次密码不一致".into());
+                }
+                return;
+            }
+            let weak = ui.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
+                let result = rt.block_on(gate::register(
+                    &gate_url(&server_host), &user, &email, &passwd, &confirm, &code,
+                ));
+                let msg = match result {
+                    Ok(()) => "注册成功,请登录".to_string(),
+                    Err(e) => format!("注册失败: {e}"),
+                };
+                let switch_to_login = msg.starts_with("注册成功");
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_login_status(msg.into());
+                    if switch_to_login {
+                        ui.set_auth_mode(0);
+                    }
+                });
+            });
+        }
+    });
+
+    ui.on_do_reset_password({
+        let ui = ui.as_weak();
+        move || {
+            let fields = match ui.upgrade() {
+                Some(ui) => (
+                    ui.get_server_host().to_string(),
+                    ui.get_username().to_string(),
+                    ui.get_email().to_string(),
+                    ui.get_password().to_string(),
+                    ui.get_verify_code().to_string(),
+                ),
+                None => return,
+            };
+            let (server_host, user, email, passwd, code) = fields;
+            let weak = ui.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
+                let result = rt.block_on(gate::reset_password(&gate_url(&server_host), &user, &email, &passwd, &code));
+                let msg = match result {
+                    Ok(()) => "密码已重置,请登录".to_string(),
+                    Err(e) => format!("重置失败: {e}"),
+                };
+                let switch_to_login = msg.starts_with("密码已重置");
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_login_status(msg.into());
+                    if switch_to_login {
+                        ui.set_auth_mode(0);
+                    }
+                });
+            });
+        }
+    });
+
     ui.on_select_friend({
         let state = Arc::clone(&state);
         let ui = ui.as_weak();
@@ -71,6 +178,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let mut s = state.lock().unwrap();
             s.open_conversation(friend.as_str());
             if let Some(ui) = ui.upgrade() {
+                ui.set_selected_friend(friend.into());
                 push_ui_from_state(&ui, &s);
             }
         }
@@ -172,4 +280,12 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     ui.run()
+}
+
+/// Build a gate base URL from a "host:port" server string.
+fn gate_url(server_host: &str) -> String {
+    match net_loop::split_host_port(server_host) {
+        Some((host, port)) if port != 0 => format!("http://{host}:{port}"),
+        _ => String::new(),
+    }
 }

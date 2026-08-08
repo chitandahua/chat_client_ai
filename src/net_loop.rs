@@ -379,9 +379,12 @@ pub async fn do_login(
 
     let data = resp.data.ok_or_else(|| "登录响应缺少数据".to_string())?;
 
+    // Only pending applies (status 0) show as "requesting to be your friend".
+    // Approved ones (status 1) are already friends and must not be listed.
     let applies: Vec<FriendApply> = data
         .apply_list
         .into_iter()
+        .filter(|a| a.status != 1)
         .map(|a| FriendApply { from_uid: a.id, name: a.name })
         .collect();
     let friends: Vec<Friend> = data

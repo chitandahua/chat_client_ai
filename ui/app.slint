@@ -258,7 +258,10 @@ export component MainWindow inherits Window {
             Rectangle {
                 height: 50px;
                 background: #f0f2f4;
-                Text { text: "与 " + root.selected-friend + " 的对话"; font-size: 15px; font-weight: 600; x: 16px; y: 17px; color: #222222; }
+                Text {
+                    text: root.selected-friend == "" ? "选择好友开始聊天" : "与 " + root.selected-friend + " 的对话";
+                    font-size: 15px; font-weight: 600; x: 16px; y: 17px; color: #222222;
+                }
             }
             Rectangle {
                 horizontal-stretch: 1;

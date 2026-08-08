@@ -9,7 +9,7 @@ export component MainWindow inherits Window {
     height: 540px;
     background: #ffffff;
 
-    in-out property <string> server-host: "";
+    in-out property <string> server-host: "127.0.0.1:10086";
     in-out property <string> username: "";
     in-out property <string> password: "";
     in-out property <string> login-status: "";
@@ -65,11 +65,6 @@ export component MainWindow inherits Window {
             Rectangle { height: 8px; }
 
             LineEdit {
-                placeholder-text: "服务器 host:port";
-                text: root.server-host;
-                edited(text) => { root.server-host = text; }
-            }
-            LineEdit {
                 placeholder-text: "用户名";
                 text: root.username;
                 edited(text) => { root.username = text; }
@@ -87,7 +82,12 @@ export component MainWindow inherits Window {
                     text: root.verify-code;
                     edited(text) => { root.verify-code = text; }
                 }
-                Button { text: "获取验证码"; clicked => { root.request-verify-code(); } }
+                Button { text: "获取验证码"; width: 96px; clicked => { root.request-verify-code(); } }
+            }
+            if root.auth-mode == 0 : LineEdit {
+                placeholder-text: "密码";
+                text: root.password;
+                edited(text) => { root.password = text; }
             }
             if root.auth-mode == 1 : LineEdit {
                 placeholder-text: "密码";

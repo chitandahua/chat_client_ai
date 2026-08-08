@@ -88,7 +88,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
                 let result = rt.block_on(gate::get_verify_code(&gate_url(&server_host), &email));
                 let msg = match result {
-                    Ok(info) => format!("验证码已发送至 {}", info.email),
+                    // The server's mailer is not wired up, so it echoes a
+                    // placeholder code; surface it so the flow is usable in test.
+                    Ok(info) if info.code.is_empty() => format!("验证码已发送至 {}", info.email),
+                    Ok(info) => format!("验证码: {} (测试环境,请勿外传)", info.code),
                     Err(e) => format!("获取验证码失败: {e}"),
                 };
                 let _ = weak.upgrade_in_event_loop(move |ui| ui.set_login_status(msg.into()));

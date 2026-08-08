@@ -82,6 +82,9 @@ pub struct LoginRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Friend {
+    /// Friend's uid. The server added this to the login friend_list.
+    #[serde(default)]
+    pub id: i64,
     pub name: String,
     #[serde(default)]
     pub back: String,
@@ -89,6 +92,9 @@ pub struct Friend {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Apply {
+    /// Applicant's uid (0 if the server didn't supply it).
+    #[serde(default)]
+    pub id: i64,
     pub name: String,
     #[serde(default)]
     pub status: i64,

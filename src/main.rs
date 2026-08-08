@@ -508,13 +508,17 @@ async fn do_login(
 
     let data = resp.data.ok_or_else(|| "登录响应缺少数据".to_string())?;
 
-    let apply_names: Vec<String> = data.apply_list.iter().map(|a| a.name.clone()).collect();
-    let friends: Vec<Friend> =
-        data.friend_list.into_iter().map(|f| Friend::from_name(f.name)).collect();
+    let applies: Vec<(i64, String)> =
+        data.apply_list.into_iter().map(|a| (a.id, a.name.clone())).collect();
+    let friends: Vec<Friend> = data
+        .friend_list
+        .into_iter()
+        .map(|f| Friend::new(f.id, f.name))
+        .collect();
     {
         let mut s = state.lock().unwrap();
         s.login_succeeded(data.uid, friends);
-        s.seed_applies(apply_names);
+        s.seed_applies(applies);
     }
 
     Ok(conn)

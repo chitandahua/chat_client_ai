@@ -27,9 +27,8 @@ pub struct Friend {
 }
 
 impl Friend {
-    /// Create a friend from a login-list entry (no uid known server-side).
-    pub fn from_name(name: String) -> Self {
-        Friend { id: 0, name }
+    pub fn new(id: i64, name: String) -> Self {
+        Friend { id, name }
     }
 }
 
@@ -104,11 +103,11 @@ impl AppState {
         self.applies.push(FriendApply { from_uid, name });
     }
 
-    /// Seed pending applies from the login response (which carries names but
-    /// no uids). Uid is 0 until a 1011 push or search supplies it.
-    pub fn seed_applies(&mut self, names: Vec<String>) {
-        for name in names {
-            self.apply_received(0, name);
+    /// Seed pending applies from the login response, which now carries the
+    /// applicant's uid. uid is 0 if the server didn't supply it.
+    pub fn seed_applies(&mut self, applies: Vec<(i64, String)>) {
+        for (uid, name) in applies {
+            self.apply_received(uid, name);
         }
     }
 
@@ -276,7 +275,7 @@ mod tests {
     #[test]
     fn friend_for_uid_degrades_to_uid_label_when_unmapped() {
         let mut state = AppState::new();
-        state.login_succeeded(0, vec![Friend::from_name("aaa".into())]);
+        state.login_succeeded(0, vec![Friend::new(0, "aaa".into())]);
         // login list has no uid -> push from uid 1 maps to a uid:1 label
         assert_eq!(state.friend_for_uid(1), "uid:1");
         // known uid maps to the name
@@ -287,7 +286,7 @@ mod tests {
     #[test]
     fn receive_push_learns_uid_and_routes_to_friend() {
         let mut state = AppState::new();
-        state.login_succeeded(4, vec![Friend::from_name("aaa".into())]);
+        state.login_succeeded(4, vec![Friend::new(0, "aaa".into())]);
 
         let friend = state.receive_push(1, "你好".into());
         assert_eq!(friend, "aaa"); // learned uid 1 -> aaa
@@ -301,7 +300,7 @@ mod tests {
     #[test]
     fn receive_push_degrades_to_uid_label_when_ambiguous() {
         let mut state = AppState::new();
-        state.login_succeeded(4, vec![Friend::from_name("aaa".into()), Friend::from_name("bbb".into())]);
+        state.login_succeeded(4, vec![Friend::new(0, "aaa".into()), Friend::new(0, "bbb".into())]);
         // two unknown-uid friends -> can't learn, degrade to uid:N
         let friend = state.receive_push(1, "hi".into());
         assert_eq!(friend, "uid:1");
@@ -369,13 +368,13 @@ mod tests {
     }
 
     #[test]
-    fn seed_applies_loads_login_apply_list() {
+    fn seed_applies_loads_login_apply_list_with_uids() {
         let mut state = AppState::new();
-        state.seed_applies(vec!["aaa".into(), "bbb".into()]);
+        state.seed_applies(vec![(1, "aaa".into()), (3, "bbb".into())]);
         assert_eq!(state.applies.len(), 2);
-        // login applies have no uid
-        assert_eq!(state.applies[0].from_uid, 0);
-        assert_eq!(state.applies[1].name, "bbb");
+        assert_eq!(state.applies[0].from_uid, 1);
+        assert_eq!(state.applies[0].name, "aaa");
+        assert_eq!(state.applies[1].from_uid, 3);
     }
 
     #[test]

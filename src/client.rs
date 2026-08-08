@@ -25,139 +25,135 @@ pub struct Client<'a> {
     conn: &'a mut dyn NetConnection,
     my_uid: i64,
     timeout: std::time::Duration,
+    /// Interleaved pushes received while awaiting a command response, collected
+    /// here so the owning loop can dispatch them through one path.
+    pending_pushes: Vec<Frame>,
 }
 
 impl<'a> Client<'a> {
     pub fn new(conn: &'a mut dyn NetConnection, my_uid: i64) -> Self {
-        Client { conn, my_uid, timeout: std::time::Duration::from_secs(5) }
+        Client {
+            conn,
+            my_uid,
+            timeout: std::time::Duration::from_secs(5),
+            pending_pushes: Vec::new(),
+        }
     }
 
-    pub async fn search(
-        &mut self,
-        name: &str,
-        on_push: &mut dyn FnMut(&Frame),
-    ) -> Result<UserInfo, SearchError> {
+    /// Drain pushes collected while awaiting command responses.
+    pub fn drain_pushes(&mut self) -> Vec<Frame> {
+        std::mem::take(&mut self.pending_pushes)
+    }
+
+    pub async fn search(&mut self, name: &str) -> Result<UserInfo, ClientError> {
         let req = SearchRequest::by_name(name.to_string());
         let frame = self
-            .request(crate::protocol::SEARCH_REQUEST, crate::protocol::SEARCH_RESPONSE, &req, on_push)
+            .request(crate::protocol::SEARCH_REQUEST, crate::protocol::SEARCH_RESPONSE, &req)
             .await?;
         match crate::protocol::SearchResponse::from_body(&frame.body) {
             Ok(crate::protocol::SearchResponse::Found(user)) => Ok(user),
             Ok(crate::protocol::SearchResponse::Error(e)) if e.error != 0 => {
-                Err(SearchError::Unavailable("搜索不可用(服务端错误)".into()))
+                Err(ClientError::Unavailable("搜索不可用(服务端错误)".into()))
             }
-            _ => Err(SearchError::Unavailable("搜索无结果".into())),
+            _ => Err(ClientError::Unavailable("搜索无结果".into())),
         }
     }
 
-    pub async fn send_text(
-        &mut self,
-        touid: i64,
-        text: &str,
-        on_push: &mut dyn FnMut(&Frame),
-    ) -> Result<(), SearchError> {
+    pub async fn send_text(&mut self, touid: i64, text: &str) -> Result<(), ClientError> {
         let req = TextChatRequest {
             fromuid: self.my_uid,
             touid,
             text_array: vec![TextChatData { msgid: 1, content: text.to_string() }],
         };
         let frame = self
-            .request(crate::protocol::TEXT_CHAT_REQUEST, crate::protocol::TEXT_CHAT_RESPONSE, &req, on_push)
+            .request(crate::protocol::TEXT_CHAT_REQUEST, crate::protocol::TEXT_CHAT_RESPONSE, &req)
             .await?;
         let resp: TextChatResponse = serde_json::from_slice(&frame.body)
-            .map_err(|_| SearchError::Unavailable("消息响应解析失败".into()))?;
+            .map_err(|_| ClientError::Unavailable("消息响应解析失败".into()))?;
         if resp.is_ok() {
             Ok(())
         } else {
-            Err(SearchError::Unavailable(resp.message))
+            Err(ClientError::Unavailable(resp.message))
         }
     }
 
-    pub async fn add_friend(
-        &mut self,
-        touid: i64,
-        on_push: &mut dyn FnMut(&Frame),
-    ) -> Result<(), SearchError> {
+    pub async fn add_friend(&mut self, touid: i64) -> Result<(), ClientError> {
         let req = AddFriendRequest { uid: self.my_uid, touid };
         let frame = self
-            .request(crate::protocol::ADD_FRIEND_REQUEST, crate::protocol::ADD_FRIEND_RESPONSE, &req, on_push)
+            .request(crate::protocol::ADD_FRIEND_REQUEST, crate::protocol::ADD_FRIEND_RESPONSE, &req)
             .await?;
         let resp: SimpleResponse = serde_json::from_slice(&frame.body)
-            .map_err(|_| SearchError::Unavailable("响应解析失败".into()))?;
+            .map_err(|_| ClientError::Unavailable("响应解析失败".into()))?;
         if resp.is_ok() {
             Ok(())
         } else {
-            Err(SearchError::Unavailable("加好友失败".into()))
+            Err(ClientError::Unavailable("加好友失败".into()))
         }
     }
 
-    pub async fn approve(
-        &mut self,
-        fromuid: i64,
-        on_push: &mut dyn FnMut(&Frame),
-    ) -> Result<(), SearchError> {
+    pub async fn approve(&mut self, fromuid: i64) -> Result<(), ClientError> {
         let req = AuthFriendRequest { fromuid: self.my_uid, touid: fromuid };
         let frame = self
-            .request(crate::protocol::AUTH_FRIEND_REQUEST, crate::protocol::AUTH_FRIEND_RESPONSE, &req, on_push)
+            .request(crate::protocol::AUTH_FRIEND_REQUEST, crate::protocol::AUTH_FRIEND_RESPONSE, &req)
             .await?;
         let resp: SimpleResponse = serde_json::from_slice(&frame.body)
-            .map_err(|_| SearchError::Unavailable("响应解析失败".into()))?;
+            .map_err(|_| ClientError::Unavailable("响应解析失败".into()))?;
         if resp.is_ok() {
             Ok(())
         } else {
-            Err(SearchError::Unavailable("同意失败".into()))
+            Err(ClientError::Unavailable("同意失败".into()))
         }
     }
 
     /// Send a request frame, then read frames until the matching response id
-    /// arrives. Interleaved push frames are handed to `on_push`.
+    /// arrives. Interleaved pushes are collected for the owning loop via
+    /// `drain_pushes`.
     async fn request<T: serde::Serialize>(
         &mut self,
         req_id: u32,
         resp_id: u32,
         body: &T,
-        on_push: &mut dyn FnMut(&Frame),
-    ) -> Result<Frame, SearchError> {
-        let frame = Frame::new(req_id, serde_json::to_vec(body).map_err(|e| SearchError::Protocol(e.to_string()))?);
+    ) -> Result<Frame, ClientError> {
+        let frame = Frame::new(req_id, serde_json::to_vec(body).map_err(|e| ClientError::Protocol(e.to_string()))?);
         self.conn
             .send(&frame)
             .await
-            .map_err(|e| SearchError::Protocol(e.to_string()))?;
+            .map_err(|e| ClientError::Protocol(e.to_string()))?;
 
         loop {
             let frame = tokio::time::timeout(self.timeout, self.conn.recv())
                 .await
-                .map_err(|_| SearchError::Timeout)?
-                .map_err(|e| SearchError::Protocol(e.to_string()))?;
+                .map_err(|_| ClientError::Timeout)?
+                .map_err(|e| ClientError::Protocol(e.to_string()))?;
             if frame.id == resp_id {
                 return Ok(frame);
             }
-            on_push(&frame);
+            self.pending_pushes.push(frame);
         }
     }
 
     /// Read the next frame without correlation — used by the owning loop to
     /// pick up pushes. The socket is still owned by the client.
-    pub async fn recv_push(&mut self) -> Result<Frame, SearchError> {
+    pub async fn recv_push(&mut self) -> Result<Frame, ClientError> {
         self.conn
             .recv()
             .await
-            .map_err(|e| SearchError::Protocol(e.to_string()))
+            .map_err(|e| ClientError::Protocol(e.to_string()))
     }
 }
 
 #[derive(Debug)]
-pub enum SearchError {
+pub enum ClientError {
     Unavailable(String),
     Protocol(String),
     Timeout,
 }
 
-impl std::fmt::Display for SearchError {
+impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SearchError::Unavailable(m) | SearchError::Protocol(m) => write!(f, "{m}"),
-            SearchError::Timeout => write!(f, "请求超时"),
+            ClientError::Unavailable(m) | ClientError::Protocol(m) => write!(f, "{m}"),
+            ClientError::Timeout => write!(f, "请求超时"),
         }
     }
 }
@@ -212,7 +208,7 @@ mod tests {
         let mut conn = MockConnection::new(vec![frame(crate::protocol::SEARCH_RESPONSE, &user)]);
         let mut client = Client::new(&mut conn, 4);
 
-        let result = client.search("aaa", &mut |_| {}).await.unwrap();
+        let result = client.search("aaa").await.unwrap();
         assert_eq!(result.id, 1);
         assert_eq!(result.name, "aaa");
         assert_eq!(conn.sent[0].id, crate::protocol::SEARCH_REQUEST);
@@ -224,8 +220,8 @@ mod tests {
         let mut conn = MockConnection::new(vec![frame(crate::protocol::SEARCH_RESPONSE, &err)]);
         let mut client = Client::new(&mut conn, 4);
 
-        let result = client.search("nope", &mut |_| {}).await;
-        assert!(matches!(result, Err(SearchError::Unavailable(_))));
+        let result = client.search("nope").await;
+        assert!(matches!(result, Err(ClientError::Unavailable(_))));
     }
 
     #[tokio::test]
@@ -234,8 +230,26 @@ mod tests {
         let mut conn = MockConnection::new(vec![frame(crate::protocol::TEXT_CHAT_RESPONSE, &ok)]);
         let mut client = Client::new(&mut conn, 4);
 
-        client.send_text(1, "hi", &mut |_| {}).await.unwrap();
+        client.send_text(1, "hi").await.unwrap();
         assert_eq!(conn.sent[0].id, crate::protocol::TEXT_CHAT_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn client_collects_interleaved_push_then_drains() {
+        // The server sends a push (1011) before the command's response.
+        let push = r#"{"applyuid":3,"name":"bbb"}"#.to_string();
+        let ok = r#"{"error":0,"message":""}"#.to_string();
+        let mut conn = MockConnection::new(vec![
+            frame(crate::protocol::NOTIFY_ADD_FRIEND, &push),
+            frame(crate::protocol::TEXT_CHAT_RESPONSE, &ok),
+        ]);
+        let mut client = Client::new(&mut conn, 4);
+
+        client.send_text(1, "hi").await.unwrap();
+
+        let drained = client.drain_pushes();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].id, crate::protocol::NOTIFY_ADD_FRIEND);
     }
 
     #[tokio::test]
@@ -247,8 +261,8 @@ mod tests {
         ]);
         let mut client = Client::new(&mut conn, 4);
 
-        client.add_friend(3, &mut |_| {}).await.unwrap();
-        client.approve(1, &mut |_| {}).await.unwrap();
+        client.add_friend(3).await.unwrap();
+        client.approve(1).await.unwrap();
         assert_eq!(conn.sent[0].id, crate::protocol::ADD_FRIEND_REQUEST);
         assert_eq!(conn.sent[1].id, crate::protocol::AUTH_FRIEND_REQUEST);
     }
@@ -259,7 +273,7 @@ mod tests {
         let mut client = Client::new(&mut conn, 4);
         client.timeout = std::time::Duration::from_millis(20);
 
-        let result = client.search("aaa", &mut |_| {}).await;
-        assert!(matches!(result, Err(SearchError::Timeout)));
+        let result = client.search("aaa").await;
+        assert!(matches!(result, Err(ClientError::Timeout)));
     }
 }

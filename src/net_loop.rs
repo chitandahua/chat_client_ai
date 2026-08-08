@@ -77,19 +77,13 @@ async fn execute_cmd(
     cmd: NetCmd,
 ) {
     // Interleaved pushes arriving while a command awaits its response are
-    // dispatched here, mirroring the main loop.
-    let mut on_push = |frame: &Frame| {
-        let state = Arc::clone(state);
-        handle_push(ui, state, frame);
-    };
-    let on_push = &mut on_push;
-
+    // collected by the Client and drained here — one dispatch path.
     match cmd {
         NetCmd::SendText { touid, text } => {
-            let _ = client.send_text(touid, &text, on_push).await;
+            let _ = client.send_text(touid, &text).await;
         }
         NetCmd::Search { name } => {
-            match client.search(&name, on_push).await {
+            match client.search(&name).await {
                 Ok(user) => {
                     let is_friend = state.lock().unwrap().is_friend(user.id);
                     state.lock().unwrap().set_search_result(Some(Friend::new(user.id, user.name.clone())));
@@ -114,7 +108,7 @@ async fn execute_cmd(
             }
         }
         NetCmd::AddFriend { touid } => {
-            let msg = match client.add_friend(touid, on_push).await {
+            let msg = match client.add_friend(touid).await {
                 Ok(()) => "申请已发送".to_string(),
                 Err(e) => format!("加好友失败: {e}"),
             };
@@ -123,7 +117,7 @@ async fn execute_cmd(
             });
         }
         NetCmd::ApproveApply { fromuid } => {
-            let ok = client.approve(fromuid, on_push).await.is_ok();
+            let ok = client.approve(fromuid).await.is_ok();
             let state2 = Arc::clone(state);
             let _ = ui.upgrade_in_event_loop(move |ui| {
                 if ok {
@@ -136,6 +130,11 @@ async fn execute_cmd(
                 }
             });
         }
+    }
+
+    // dispatch any pushes collected while awaiting this command
+    for frame in client.drain_pushes() {
+        handle_push(ui, Arc::clone(state), &frame);
     }
 }
 

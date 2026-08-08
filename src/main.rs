@@ -8,6 +8,7 @@ mod net_loop;
 mod protocol;
 mod ui_bridge;
 
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use app::AppState;
@@ -84,10 +85,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 Some(ui) => (ui.get_server_host().to_string(), ui.get_email().to_string()),
                 None => return,
             };
-            spawn_gate(&ui, false, move |rt| {
+            spawn_gate(&ui, false, async move {
                 // The server's mailer is not wired up, so it echoes a placeholder
                 // code; surface it so the flow is usable in test.
-                match rt.block_on(gate::get_verify_code(&gate_url(&server_host), &email)) {
+                match gate::get_verify_code(&gate_url(&server_host), &email).await {
                     Ok(info) if info.code.is_empty() => format!("验证码已发送至 {}", info.email),
                     Ok(info) => format!("验证码: {} (测试环境,请勿外传)", info.code),
                     Err(e) => format!("获取验证码失败: {e}"),
@@ -117,10 +118,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
-            spawn_gate(&ui, true, move |rt| {
-                match rt.block_on(gate::register(
+            spawn_gate(&ui, true, async move {
+                match gate::register(
                     &gate_url(&server_host), &user, &email, &passwd, &confirm, &code,
-                )) {
+                )
+                .await
+                {
                     Ok(()) => "注册成功,请登录".to_string(),
                     Err(e) => format!("注册失败: {e}"),
                 }
@@ -142,8 +145,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 None => return,
             };
             let (server_host, user, email, passwd, code) = fields;
-            spawn_gate(&ui, true, move |rt| {
-                match rt.block_on(gate::reset_password(&gate_url(&server_host), &user, &email, &passwd, &code)) {
+            spawn_gate(&ui, true, async move {
+                match gate::reset_password(&gate_url(&server_host), &user, &email, &passwd, &code).await {
                     Ok(()) => "密码已重置,请登录".to_string(),
                     Err(e) => format!("重置失败: {e}"),
                 }
@@ -287,18 +290,18 @@ fn gate_url(server_host: &str) -> String {
     }
 }
 
-/// Run a gate HTTP call on a short-lived thread and push the result string
-/// back onto the UI thread. `switch_to_login` (when true) flips the auth screen
-/// back to login mode after the message is shown.
+/// Run a gate HTTP future on a short-lived thread and push the resulting
+/// message string back onto the UI thread. `switch_to_login` (when true) flips
+/// the auth screen back to login mode after the message is shown.
 fn spawn_gate(
     ui: &slint::Weak<MainWindow>,
     switch_to_login: bool,
-    work: impl FnOnce(&tokio::runtime::Runtime) -> String + Send + 'static,
+    work: impl Future<Output = String> + Send + 'static,
 ) {
     let weak = ui.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("rt");
-        let msg = work(&rt);
+        let msg = rt.block_on(work);
         let _ = weak.upgrade_in_event_loop(move |ui| {
             ui.set_login_status(msg.into());
             if switch_to_login {

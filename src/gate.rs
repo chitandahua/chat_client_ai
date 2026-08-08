@@ -50,6 +50,14 @@ async fn post_json<T: serde::de::DeserializeOwned>(
     resp.json().await.map_err(GateError::Http)
 }
 
+/// Validate a gate response's status and return its data payload.
+fn data<T>(parsed: GateResponse<T>) -> Result<T, GateError> {
+    if parsed.status != 0 {
+        return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
+    }
+    parsed.data.ok_or(GateError::MissingData)
+}
+
 /// Log in via the gate server's HTTP `/user_login` endpoint.
 pub async fn user_login(gate_url: &str, user: &str, passwd: &str) -> Result<GateLoginInfo, GateError> {
     let client = reqwest::Client::new();
@@ -60,10 +68,7 @@ pub async fn user_login(gate_url: &str, user: &str, passwd: &str) -> Result<Gate
         &serde_json::json!({ "user": user, "passwd": passwd }),
     )
     .await?;
-    if parsed.status != 0 {
-        return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
-    }
-    parsed.data.ok_or(GateError::MissingData)
+    data(parsed)
 }
 
 /// Register a new account. Server requires a valid verify code for the email.
@@ -86,10 +91,7 @@ pub async fn register(
         }),
     )
     .await?;
-    if parsed.status != 0 {
-        return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
-    }
-    Ok(())
+    data(parsed).map(|_| ())
 }
 
 /// Reset a password using an email verify code.
@@ -110,10 +112,7 @@ pub async fn reset_password(
         }),
     )
     .await?;
-    if parsed.status != 0 {
-        return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
-    }
-    Ok(())
+    data(parsed).map(|_| ())
 }
 
 /// Request a verification code for an email.
@@ -126,10 +125,7 @@ pub async fn get_verify_code(gate_url: &str, email: &str) -> Result<VerifyCodeIn
         &serde_json::json!({ "email": email }),
     )
     .await?;
-    if parsed.status != 0 {
-        return Err(GateError::GateRejected { status: parsed.status, message: parsed.message });
-    }
-    parsed.data.ok_or(GateError::MissingData)
+    data(parsed)
 }
 
 #[cfg(test)]

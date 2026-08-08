@@ -1,0 +1,259 @@
+// THROWAWAY visual prototype for the Iffchat IM layout.
+// Pure UI, no interaction logic. Left nav (avatar/chat/friends), middle column
+// (search + list), right pane (chat window). Switchable pages: chat / friends /
+// new-friends. Window 1100x900, WeChat-like.
+import { Button, LineEdit, ScrollView, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component Iffchat inherits Window {
+    title: "Iffchat";
+    width: 1100px;
+    height: 900px;
+    background: #ffffff;
+
+    // 0 = chat page, 1 = friends page, 2 = new friends page
+    in-out property <int> page: 0;
+
+    callback goto-chat();
+    callback goto-friends();
+    callback goto-new-friends();
+
+    property <[string]> friends: ["Ben", "Lily", "Summer", "Candy", "燃烧的胸毛"];
+    property <[string]> conv-previews: ["在吗?", "好的收到", "下班后一起吃饭?", "明天见", "hello"];
+    property <[int]> conv-unread: [1, 0, 2, 0, 0];
+    // new-friends applies: status 0 = pending (同意/拒绝), 1 = accepted (已添加)
+    property <[string]> apply-names: ["Summer", "Candy", "Lily"];
+    property <[string]> apply-msgs: ["hello world !", "加个好友~", "老朋友了"];
+    property <[int]> apply-status: [0, 0, 1];
+
+    VerticalBox {
+        // ================= TOP TITLE BAR =================
+        Rectangle {
+            height: 40px;
+            background: #202a33;
+            HorizontalBox {
+                Text { text: "Iffchat"; color: #ffffff; font-size: 14px; }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: "—  □  ✕"; color: #9fb3c8; font-size: 13px; }
+            }
+        }
+
+        HorizontalBox {
+            // ================= LEFT NAV =================
+            Rectangle {
+                width: 60px;
+                background: #202a33;
+                VerticalBox {
+                    padding-top: 14px;
+                    spacing: 18px;
+                    alignment: center;
+
+                    // avatar
+                    Rectangle {
+                        width: 42px; height: 42px;
+                        border-radius: 21px; background: #07c160;
+                        Text { text: "我"; color: white; x: 14px; y: 11px; font-size: 15px; }
+                    }
+                    // chat nav
+                    Rectangle {
+                        width: 44px; height: 44px;
+                        border-radius: 10px;
+                        background: root.page == 0 ? #07c160 : #36424d;
+                        TouchArea { clicked => { root.goto-chat(); } }
+                        Text { text: "💬"; color: white; x: 13px; y: 10px; font-size: 18px; }
+                    }
+                    // friends nav
+                    Rectangle {
+                        width: 44px; height: 44px;
+                        border-radius: 10px;
+                        background: root.page != 0 ? #07c160 : #36424d;
+                        TouchArea { clicked => { root.goto-friends(); } }
+                        Text { text: "👤"; color: white; x: 13px; y: 10px; font-size: 18px; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+
+            // ================= MIDDLE COLUMN =================
+            Rectangle {
+                width: 280px;
+                background: #f0f2f5;
+                VerticalBox {
+                    // search + add-friend
+                    HorizontalBox {
+                        padding: 8px;
+                        spacing: 6px;
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            height: 30px;
+                            placeholder-text: "🔍 搜索";
+                            font-size: 13px;
+                        }
+                        Button { text: "＋"; width: 32px; height: 30px; }
+                    }
+
+                    // ===== CHAT PAGE: recent conversations =====
+                    if root.page == 0 : ScrollView {
+                        VerticalBox {
+                            padding: 6px;
+                            spacing: 2px;
+                            alignment: start;
+                            for name[idx] in root.friends : Rectangle {
+                                height: 58px;
+                                border-radius: 6px;
+                                background: transparent;
+                                VerticalLayout { alignment: center;
+                                    HorizontalBox {
+                                        padding: 8px;
+                                        Rectangle { width: 38px; height: 38px; border-radius: 19px; background: #07c160; }
+                                        Rectangle { width: 10px; }
+                                        VerticalLayout {
+                                            Text { text: name; font-size: 14px; color: #222222; }
+                                            Text { text: root.conv-previews[idx]; font-size: 12px; color: #999999; }
+                                        }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        if idx < root.conv-unread.length && root.conv-unread[idx] > 0 : Rectangle {
+                                            width: 18px; height: 18px; border-radius: 9px; background: #e64c3c;
+                                            Text { text: root.conv-unread[idx]; color: white; x: 5px; y: 3px; font-size: 10px; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ===== FRIENDS PAGE: new-friends entry + contacts =====
+                    if root.page == 1 : ScrollView {
+                        VerticalBox {
+                            padding: 6px;
+                            spacing: 4px;
+                            alignment: start;
+                            // new friends entry
+                            Rectangle {
+                                height: 50px;
+                                border-radius: 8px;
+                                background: #e6f4ea;
+                                TouchArea { clicked => { root.goto-new-friends(); } }
+                                VerticalLayout { alignment: center;
+                                    HorizontalBox {
+                                        padding: 8px;
+                                        Rectangle { width: 34px; height: 34px; border-radius: 17px; background: #f5a623; Text { text: "＋"; color: white; x: 10px; y: 7px; font-size: 16px; } }
+                                        Rectangle { width: 10px; }
+                                        Text { text: "新的朋友"; font-size: 14px; color: #1d7a3c; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Rectangle { width: 18px; height: 18px; border-radius: 9px; background: #e64c3c; Text { text: "2"; color: white; x: 5px; y: 3px; font-size: 10px; } }
+                                    }
+                                }
+                            }
+                            Rectangle { height: 2px; background: #e3e6ea; }
+                            Text { text: "联系人"; font-size: 13px; color: #888888; }
+                            for name in root.friends : Rectangle {
+                                height: 46px;
+                                border-radius: 6px;
+                                background: transparent;
+                                HorizontalBox {
+                                    padding: 6px;
+                                    VerticalBox { alignment: center; width: 44px; Rectangle { width: 34px; height: 34px; border-radius: 17px; background: #07c160; } }
+                                    Rectangle { width: 6px; }
+                                    Text { text: name; font-size: 14px; color: #222222; vertical-alignment: center; }
+                                }
+                            }
+                        }
+                    }
+
+                    // ===== NEW-FRIENDS PAGE: applies list =====
+                    if root.page == 2 : ScrollView {
+                        VerticalBox {
+                            padding: 6px;
+                            spacing: 2px;
+                            alignment: start;
+                            for name[idx] in root.apply-names : Rectangle {
+                                height: 60px;
+                                border-radius: 6px;
+                                background: transparent;
+                                VerticalLayout { alignment: center;
+                                    HorizontalBox {
+                                        padding: 8px;
+                                        Rectangle { width: 38px; height: 38px; border-radius: 19px; background: #f5a623; }
+                                        Rectangle { width: 10px; }
+                                        VerticalLayout {
+                                            Text { text: name; font-size: 14px; color: #222222; }
+                                            Text { text: root.apply-msgs[idx]; font-size: 12px; color: #888888; }
+                                        }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        if idx < root.apply-status.length && root.apply-status[idx] == 1 : Text {
+                                            text: "已添加"; font-size: 13px; color: #999999;
+                                        }
+                                        if idx < root.apply-status.length && root.apply-status[idx] == 0 : HorizontalBox {
+                                            spacing: 4px;
+                                            Button { text: "拒绝"; width: 44px; }
+                                            Button { text: "同意"; width: 44px; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ================= RIGHT PANE =================
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #ffffff;
+                VerticalBox {
+                    // chat header: friend name only, no right buttons
+                    Rectangle {
+                        height: 48px;
+                        background: #f0f2f4;
+                        Text { text: "燃烧的胸毛"; font-size: 15px; font-weight: 600; x: 16px; y: 16px; color: #222222; }
+                    }
+                    // messages
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: #f7f8fa;
+                        ScrollView {
+                            width: 100%; height: 100%;
+                            VerticalBox {
+                                padding: 16px;
+                                spacing: 12px;
+                                HorizontalBox { Rectangle { horizontal-stretch: 1; } Rectangle { background: #07c160; border-radius: 10px; width: 200px; VerticalBox { padding: 10px; Text { text: "你好，吃饭了吗"; font-size: 13px; color: white; } } } }
+                                HorizontalBox { Rectangle { background: #ffffff; border-radius: 10px; width: 200px; VerticalBox { padding: 10px; Text { text: "刚吃过了，你呢？"; font-size: 13px; color: #333333; } } } Rectangle { horizontal-stretch: 1; } }
+                                HorizontalBox { Rectangle { horizontal-stretch: 1; } Rectangle { background: #07c160; border-radius: 10px; width: 160px; VerticalBox { padding: 10px; Text { text: "走，晚上撸串去"; font-size: 13px; color: white; } } } }
+                            }
+                        }
+                    }
+                    // emoji/file toolbar between messages and input
+                    Rectangle {
+                        height: 34px;
+                        background: #ffffff;
+                        HorizontalBox {
+                            padding-left: 12px;
+                            spacing: 14px;
+                            Text { text: "🙂"; font-size: 16px; y: 6px; }
+                            Text { text: "📁"; font-size: 16px; y: 6px; }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    // big input
+                    Rectangle {
+                        height: 100px;
+                        background: #ffffff;
+                        TextEdit { width: 100%; height: 100%; text: ""; placeholder-text: "输入消息…"; }
+                    }
+                    // receive / send
+                    Rectangle {
+                        height: 52px;
+                        background: #f0f2f4;
+                        HorizontalBox {
+                            alignment: end;
+                            padding: 8px;
+                            spacing: 8px;
+                            Button { text: "接收"; width: 80px; }
+                            Button { text: "发送"; width: 80px; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

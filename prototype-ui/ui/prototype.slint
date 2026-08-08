@@ -1,0 +1,238 @@
+// THROWAWAY UI PROTOTYPE — "which chat GUI layout feels right?"
+// Login screen + 4 structurally-different main-window variants, switchable via
+// the bottom bar (◀ ▶). All mock data, no network. Not production code.
+import { Button, LineEdit, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component Prototype inherits Window {
+    title: "Chat GUI — UI prototype (选一选)";
+    width: 880px;
+    height: 600px;
+    background: #eef1f4;
+
+    // 0 = login, 1 = A 经典双栏, 2 = B 深色侧栏, 3 = C 聊天优先, 4 = D 顶部导航
+    in-out property <int> variant: 1;
+    in-out property <string> selected-friend: "林小满";
+    in-out property <string> message-input: "";
+
+    callback prev();
+    callback next();
+    callback select-friend(string);
+    callback send-message(string);
+
+    property <[string]> friends: ["林小满", "王小明", "陈师傅", "李雷", "韩梅梅"];
+    property <[string]> messages: ["林小满: 在吗", "我: 在的", "林小满: 下班后一起吃饭?"];
+
+    VerticalBox {
+        // ================= LOGIN =================
+        if root.variant == 0 : Rectangle {
+            background: #ffffff;
+            VerticalBox {
+                width: 400px; x: (parent.width - 400px) / 2; y: (parent.height - 420px) / 2;
+                padding: 28px; spacing: 14px;
+                Text { text: "Chat"; font-size: 32px; font-weight: 700; color: #07c160; horizontal-alignment: center; }
+                Text { text: "连接服务器并登录"; font-size: 13px; color: #888; horizontal-alignment: center; }
+                Rectangle { height: 10px; }
+                LineEdit { placeholder-text: "服务器 host:port"; text: "127.0.0.1:10086"; }
+                LineEdit { placeholder-text: "用户名"; text: "ssss"; }
+                LineEdit { placeholder-text: "密码"; text: "••••"; }
+                Button { text: "登录"; }
+                Text { text: "状态: 未连接"; font-size: 12px; color: #e64c3c; horizontal-alignment: center; }
+            }
+        }
+
+        // ================= A — 经典双栏 =================
+        if root.variant == 1 : HorizontalBox {
+            Rectangle {
+                width: 250px; background: #f5f6f7;
+                VerticalBox {
+                    Rectangle { height: 46px; background: #e8ebee;
+                        HorizontalBox { padding: 10px;
+                            Text { text: "消息"; font-size: 16px; font-weight: 600; color: #222; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Button { text: "＋"; width: 28px; }
+                        }
+                    }
+                    for f[idx] in root.friends : Rectangle {
+                        height: 56px; border-radius: 10px;
+                        background: f == root.selected-friend ? #d7f0e3 : transparent;
+                        HorizontalBox { padding: 8px;
+                            Rectangle { width: 38px; height: 38px; border-radius: 19px; background: #07c160; }
+                            Rectangle { width: 8px; }
+                            VerticalBox { y: 6px;
+                                Text { text: f; font-size: 14px; color: #222; }
+                                Text { text: "最后一条消息…"; font-size: 11px; color: #999; }
+                            }
+                        }
+                        TouchArea { clicked => { root.select-friend(f); } }
+                    }
+                }
+            }
+            Rectangle { width: 1px; background: #dfe2e6; }
+            VerticalBox {
+                Rectangle { height: 50px; background: #f0f2f4;
+                    Text { text: "与 " + root.selected-friend + " 的对话"; font-size: 15px; font-weight: 600; x: 14px; y: 16px; color: #222; }
+                }
+                Rectangle {
+                    ScrollView {
+                        VerticalBox { padding: 12px; spacing: 10px;
+                            for m in root.messages : Text { text: m; font-size: 14px; color: #333; }
+                        }
+                    }
+                }
+                HorizontalBox { padding: 10px; spacing: 8px;
+                    LineEdit { horizontal-stretch: 1; placeholder-text: "输入消息…"; text: root.message-input; edited(t) => { root.message-input = t; } }
+                    Button { text: "发送"; clicked => { root.send-message(root.message-input); } }
+                }
+            }
+        }
+
+        // ================= B — 深色侧栏 =================
+        if root.variant == 2 : HorizontalBox {
+            Rectangle {
+                width: 56px; background: #202a33;
+                VerticalBox { padding-top: 12px; spacing: 14px;
+                    Rectangle { width: 40px; height: 40px; x: 8px; border-radius: 20px; background: #07c160;
+                        Text { text: "我"; color: white; x: 12px; y: 11px; font-size: 14px; } }
+                    Rectangle { width: 40px; height: 40px; x: 8px; border-radius: 10px; background: #07c160;
+                        Text { text: "聊"; color: white; x: 13px; y: 11px; font-size: 14px; } }
+                    Rectangle { width: 40px; height: 40px; x: 8px; border-radius: 10px; background: #36424d;
+                        Text { text: "好"; color: white; x: 13px; y: 11px; font-size: 14px; } }
+                    Rectangle { width: 40px; height: 40px; x: 8px; border-radius: 10px; background: #36424d;
+                        Text { text: "设"; color: white; x: 13px; y: 11px; font-size: 14px; } }
+                }
+            }
+            Rectangle {
+                width: 230px; background: #f0f2f5;
+                VerticalBox {
+                    Rectangle { height: 44px; background: #ffffff;
+                        HorizontalBox { padding: 10px;
+                            Text { text: "会话"; font-size: 15px; font-weight: 600; color: #222; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Button { text: "＋"; width: 28px; }
+                        }
+                    }
+                    for f[idx] in root.friends : Rectangle {
+                        height: 52px; background: f == root.selected-friend ? #d9e7df : transparent;
+                        HorizontalBox { padding: 8px;
+                            Rectangle { width: 34px; height: 34px; border-radius: 17px; background: #07c160; }
+                            Rectangle { width: 8px; }
+                            VerticalBox { y: 4px;
+                                Text { text: f; font-size: 14px; color: #222; }
+                                Text { text: "今天 14:22"; font-size: 11px; color: #aaa; }
+                            }
+                        }
+                        TouchArea { clicked => { root.select-friend(f); } }
+                    }
+                }
+            }
+            VerticalBox {
+                Rectangle { height: 40px; background: #f8e8c8;
+                    Text { text: "林小满 请求加你为好友   [同意]  [忽略]"; font-size: 12px; color: #6b5313; x: 12px; y: 12px; }
+                }
+                VerticalBox {
+                    Rectangle { height: 48px; background: #f0f2f4;
+                        Text { text: "与 " + root.selected-friend + " 的对话"; font-size: 15px; font-weight: 600; x: 14px; y: 16px; color: #222; }
+                    }
+                    Rectangle {
+                        ScrollView { VerticalBox { padding: 12px; spacing: 10px;
+                            for m in root.messages : Text { text: m; font-size: 14px; color: #333; }
+                        } }
+                    }
+                    HorizontalBox { padding: 10px; spacing: 8px;
+                        LineEdit { horizontal-stretch: 1; placeholder-text: "输入消息…"; text: root.message-input; edited(t) => { root.message-input = t; } }
+                        Button { text: "发送"; clicked => { root.send-message(root.message-input); } }
+                    }
+                }
+            }
+        }
+
+        // ================= C — 聊天优先 =================
+        if root.variant == 3 : VerticalBox {
+            Rectangle {
+                height: 52px; background: #ffffff;
+                HorizontalBox { padding: 10px;
+                    Button { text: "☰"; width: 36px; }
+                    Text { text: "与 " + root.selected-friend + " 的对话"; font-size: 16px; font-weight: 700; color: #222; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Button { text: "🔍"; width: 36px; }
+                    Button { text: "＋ 加好友"; }
+                }
+            }
+            Rectangle {
+                ScrollView {
+                    VerticalBox { padding: 20px; spacing: 12px; alignment: center;
+                        for m in root.messages : Rectangle {
+                            background: #ffffff; border-radius: 12px;
+                                VerticalBox { padding: 10px;
+                                Text { text: m; font-size: 15px; color: #222; }
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalBox { padding: 12px; spacing: 8px;
+                LineEdit { horizontal-stretch: 1; placeholder-text: "输入消息…"; text: root.message-input; edited(t) => { root.message-input = t; } }
+                Button { text: "发送"; clicked => { root.send-message(root.message-input); } }
+            }
+        }
+
+        // ================= D — 顶部导航 =================
+        if root.variant == 4 : VerticalBox {
+            Rectangle {
+                height: 46px; background: #ffffff;
+                HorizontalBox { padding: 8px; spacing: 6px;
+                    Button { text: "消息"; }
+                    Button { text: "好友"; }
+                    Button { text: "设置"; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Button { text: "🔍"; width: 34px; }
+                    Button { text: "＋"; width: 34px; }
+                }
+            }
+            HorizontalBox {
+                Rectangle {
+                    width: 200px; background: #fafafa;
+                    ScrollView { VerticalBox { padding: 6px; spacing: 4px;
+                        for f[idx] in root.friends : Rectangle {
+                            height: 40px; border-radius: 6px;
+                            background: f == root.selected-friend ? #e2f3ea : transparent;
+                            VerticalBox { padding-left: 10px; y: 8px;
+                                Text { text: f; font-size: 13px; color: #333; }
+                            }
+                            TouchArea { clicked => { root.select-friend(f); } }
+                        }
+                    } }
+                }
+                VerticalBox {
+                    Rectangle { height: 44px; background: #f7f8fa;
+                        Text { text: "与 " + root.selected-friend + " 的对话"; font-size: 14px; font-weight: 600; x: 14px; y: 15px; color: #222; }
+                    }
+                    Rectangle {
+                        ScrollView { VerticalBox { padding: 10px; spacing: 8px;
+                            for m in root.messages : Text { text: m; font-size: 13px; color: #444; }
+                        } }
+                    }
+                    HorizontalBox { padding: 8px; spacing: 8px;
+                        LineEdit { horizontal-stretch: 1; placeholder-text: "输入消息…"; text: root.message-input; edited(t) => { root.message-input = t; } }
+                        Button { text: "发送"; clicked => { root.send-message(root.message-input); } }
+                    }
+                }
+            }
+        }
+
+        // ================= SWITCHER BAR =================
+        Rectangle {
+            height: 42px; background: #1f2933;
+            HorizontalBox { spacing: 8px; padding: 6px;
+                Button { text: "◀"; clicked => { root.prev(); } }
+                Text {
+                    text: root.variant == 0 ? "登录" : (root.variant == 1 ? "A — 经典双栏" : (root.variant == 2 ? "B — 深色侧栏" : (root.variant == 3 ? "C — 聊天优先" : "D — 顶部导航")));
+                    color: white; font-size: 13px; y: 12px;
+                }
+                Button { text: "▶"; clicked => { root.next(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: "原型 — 底部栏切换,选一个喜欢的"; color: #8fa3b8; font-size: 11px; y: 13px; }
+            }
+        }
+    }
+}

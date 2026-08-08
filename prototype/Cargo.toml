@@ -1,0 +1,12 @@
+[package]
+name = "chat-gui-prototype"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+description = "THROWAWAY prototype for the chat GUI layout question — not production code."
+
+[dependencies]
+slint = "1.17.1"
+
+[build-dependencies]
+slint-build = "1.17.1"

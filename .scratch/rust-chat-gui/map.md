@@ -6,6 +6,7 @@ A cross-platform (Linux + Windows) Rust + Slint desktop chat client for the exis
 
 ## Notes
 
+- **Pipeline progress**: wayfinder map → spec at `spec.md` → implementation tickets at `.scratch/chat-client/issues/` (5 tracer bullets, `ready-for-agent`). Next: `/implement` then `/code-review`.
 - **Domain**: `chat_project` wire protocol — raw TCP, frame `[id:u32 BE][len:u16 BE]` + JSON body. Login flow: HTTP `POST /user_login` on gate `10086` → `{id, user, token, host, port}` → TCP to chat_server (`18080`) → frame `1005` with `{"uid","token"}` within 10s. Feature ids: 1005 login / 1007 search / 1009 add friend / 1013 auth friend / 1017 text chat; pushes 1011 (add-friend apply), 1015 (auth), 1019 (text).
 - **Server quirks to tolerate (client must not rely on fixes)**: incoming text may arrive as **1015 or 1019** (same-server delivery bug sends 1015); friend list + pending applies only come in the login response — no refresh endpoint; chat is relay-only, offline messages dropped; server drops the socket on auth failure / 10s login deadline.
 - **Planning effort**: resolve decisions, produce no deliverable code. Research via `/research`; prototypes via `/prototype`; conversation via `/grilling` + `/domain-modeling`.

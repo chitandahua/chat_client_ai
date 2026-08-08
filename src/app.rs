@@ -47,11 +47,19 @@ pub struct Conversation {
     pub messages: Vec<ChatMessage>,
 }
 
-/// A pending friend-apply received from another user (not yet approved).
+/// A friend-apply received from another user. `status` mirrors the server:
+/// 0 = pending, 1 = accepted (already a friend).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FriendApply {
     pub from_uid: i64,
     pub name: String,
+    pub status: i64,
+}
+
+impl FriendApply {
+    pub fn new(from_uid: i64, name: String, status: i64) -> Self {
+        FriendApply { from_uid, name, status }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -95,19 +103,22 @@ impl AppState {
         self.login_status = LoginStatus::Connected;
     }
 
-    /// Record an incoming friend-apply push.
+    /// Record an incoming friend-apply push (status 0 = new pending).
     pub fn apply_received(&mut self, from_uid: i64, name: String) {
-        if self.applies.iter().any(|a| a.name == name) {
+        if self.applies.iter().any(|a| a.from_uid == from_uid) {
             return;
         }
-        self.applies.push(FriendApply { from_uid, name });
+        self.applies.push(FriendApply::new(from_uid, name, 0));
     }
 
-    /// Seed pending applies from the login response, which now carries the
-    /// applicant's uid. uid is 0 if the server didn't supply it.
+    /// Seed applies from the login response, preserving each apply's status
+    /// (0 pending, 1 accepted). uid is 0 if the server didn't supply it.
     pub fn seed_applies(&mut self, applies: Vec<FriendApply>) {
         for apply in applies {
-            self.apply_received(apply.from_uid, apply.name);
+            if self.applies.iter().any(|a| a.from_uid == apply.from_uid) {
+                continue;
+            }
+            self.applies.push(apply);
         }
     }
 
@@ -396,13 +407,16 @@ mod tests {
     fn seed_applies_loads_login_apply_list_with_uids() {
         let mut state = AppState::new();
         state.seed_applies(vec![
-            FriendApply { from_uid: 1, name: "aaa".into() },
-            FriendApply { from_uid: 3, name: "bbb".into() },
+            FriendApply::new(1, "aaa".into(), 0),
+            FriendApply::new(3, "bbb".into(), 1),
         ]);
         assert_eq!(state.applies.len(), 2);
         assert_eq!(state.applies[0].from_uid, 1);
-        assert_eq!(state.applies[0].name, "aaa");
+        assert_eq!(state.applies[0].status, 0);
         assert_eq!(state.applies[1].from_uid, 3);
+        // accepted (status 1) applies are kept so the new-friends page can show
+        // them as "已添加" rather than hiding them
+        assert_eq!(state.applies[1].status, 1);
     }
 
     #[test]
@@ -412,7 +426,7 @@ mod tests {
         // immediately — no push-learning needed.
         let mut state = AppState::new();
         state.login_succeeded(4, vec![Friend::new(1, "aaa".into())]);
-        state.seed_applies(vec![FriendApply { from_uid: 3, name: "bbb".into() }]);
+        state.seed_applies(vec![FriendApply::new(3, "bbb".into(), 0)]);
 
         // send to the friend whose uid came from login
         assert_eq!(state.friends[0].id, 1);

@@ -174,6 +174,23 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    ui.on_goto_chat({ let ui = ui.as_weak(); move || if let Some(u) = ui.upgrade() { u.set_page(0) } });
+    ui.on_goto_friends({ let ui = ui.as_weak(); move || if let Some(u) = ui.upgrade() { u.set_page(1) } });
+    ui.on_goto_new_friends({ let ui = ui.as_weak(); move || if let Some(u) = ui.upgrade() { u.set_page(2) } });
+
+    ui.on_open_add_dialog({
+        let ui = ui.as_weak();
+        move || if let Some(u) = ui.upgrade() {
+            u.set_add_dialog_open(true);
+            u.set_add_search_result("".into());
+            u.set_add_search_status("".into());
+        }
+    });
+    ui.on_close_add_dialog({
+        let ui = ui.as_weak();
+        move || if let Some(u) = ui.upgrade() { u.set_add_dialog_open(false) }
+    });
+
     ui.on_select_friend({
         let state = Arc::clone(&state);
         let ui = ui.as_weak();
@@ -220,7 +237,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    ui.on_search_user({
+    ui.on_add_search_user({
         let ui = ui.as_weak();
         let out_tx = Arc::clone(&out_tx);
         move |name| {
@@ -228,9 +245,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             if let Some(ui) = ui.upgrade() {
-                ui.set_search_in_progress(true);
-                ui.set_search_status("".into());
-                ui.set_search_result("".into());
+                ui.set_add_search_in_progress(true);
+                ui.set_add_search_status("".into());
+                ui.set_add_search_result("".into());
             }
             let _ = out_tx.lock().unwrap().send(NetCmd::Search { name: name.trim().to_string() });
         }
@@ -247,7 +264,7 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             if touid == 0 {
                 if let Some(ui) = ui.upgrade() {
-                    ui.set_search_status("无法添加:缺少用户 uid".into());
+                    ui.set_add_search_status("无法添加:缺少用户 uid".into());
                 }
                 return;
             }

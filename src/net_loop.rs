@@ -258,20 +258,20 @@ async fn execute_cmd(
                     state.lock().unwrap().set_search_result(Some(Friend::new(user.id, user.name.clone())));
                     let name = user.name.clone();
                     let _ = ui.upgrade_in_event_loop(move |ui| {
-                        ui.set_search_in_progress(false);
-                        ui.set_search_result(name.into());
-                        ui.set_search_result_is_friend(is_friend);
-                        ui.set_search_status("".into());
+                        ui.set_add_search_in_progress(false);
+                        ui.set_add_search_result(name.into());
+                        ui.set_add_search_result_is_friend(is_friend);
+                        ui.set_add_search_status("".into());
                     });
                 }
                 Err(e) => {
                     state.lock().unwrap().set_search_result(None);
                     let msg = e.to_string();
                     let _ = ui.upgrade_in_event_loop(move |ui| {
-                        ui.set_search_in_progress(false);
-                        ui.set_search_result("".into());
-                        ui.set_search_result_is_friend(false);
-                        ui.set_search_status(msg.into());
+                        ui.set_add_search_in_progress(false);
+                        ui.set_add_search_result("".into());
+                        ui.set_add_search_result_is_friend(false);
+                        ui.set_add_search_status(msg.into());
                     });
                 }
             }
@@ -282,7 +282,7 @@ async fn execute_cmd(
                 Err(e) => format!("加好友失败: {e}"),
             };
             let _ = ui.upgrade_in_event_loop(move |ui| {
-                ui.set_search_status(msg.into());
+                ui.set_add_search_status(msg.into());
             });
         }
         NetCmd::ApproveApply { fromuid } => {
@@ -384,8 +384,7 @@ pub async fn do_login(
     let applies: Vec<FriendApply> = data
         .apply_list
         .into_iter()
-        .filter(|a| a.status != 1)
-        .map(|a| FriendApply { from_uid: a.id, name: a.name })
+        .map(|a| FriendApply::new(a.id, a.name, a.status))
         .collect();
     let friends: Vec<Friend> = data
         .friend_list

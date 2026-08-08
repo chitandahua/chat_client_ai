@@ -137,6 +137,72 @@ pub struct IncomingText {
     pub text_array: Vec<TextChatData>,
 }
 
+// ---- Search / add friend / auth friend ----
+
+/// 1007 search by uid OR name; at least one field is present.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SearchRequest {
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub uid: i64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+fn is_zero(v: &i64) -> bool {
+    *v == 0
+}
+
+impl SearchRequest {
+    pub fn by_name(name: impl Into<String>) -> Self {
+        Self { uid: 0, name: name.into() }
+    }
+}
+
+/// 1008 search response: a user found by search. Note the server returns the
+/// raw UserInfo (not wrapped), and on failure returns an error envelope.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UserInfo {
+    pub id: i64,
+    pub name: String,
+}
+
+/// 1009 add-friend request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AddFriendRequest {
+    pub uid: i64,
+    pub touid: i64,
+}
+
+/// 1011 friend-apply push delivered to the target user.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NotifyAddFriend {
+    pub applyuid: i64,
+    pub name: String,
+}
+
+/// 1013 auth-friend request (approve/deny). `fromuid` = the person approving.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuthFriendRequest {
+    pub fromuid: i64,
+    pub touid: i64,
+}
+
+/// Generic `{"error":0,"message":"..."}` response shared by add-friend (1010)
+/// and auth-friend (1014).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SimpleResponse {
+    #[serde(default)]
+    pub error: i64,
+    #[serde(default)]
+    pub message: String,
+}
+
+impl SimpleResponse {
+    pub fn is_ok(&self) -> bool {
+        self.error == 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +284,42 @@ mod tests {
             assert_eq!(parsed.touid, 4);
             assert_eq!(parsed.text_array[0].content, "hi");
         }
+    }
+
+    #[test]
+    fn search_request_serializes_by_name() {
+        let by_name = serde_json::to_value(SearchRequest::by_name("aaa")).unwrap();
+        assert_eq!(by_name, serde_json::json!({"name": "aaa"}));
+    }
+
+    #[test]
+    fn add_friend_request_serializes_uid_and_touid() {
+        let req = AddFriendRequest { uid: 4, touid: 1 };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json, serde_json::json!({"uid": 4, "touid": 1}));
+    }
+
+    #[test]
+    fn auth_friend_request_serializes_from_and_to() {
+        let req = AuthFriendRequest { fromuid: 4, touid: 1 };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json, serde_json::json!({"fromuid": 4, "touid": 1}));
+    }
+
+    #[test]
+    fn notify_add_friend_parses_push() {
+        let body = br#"{"applyuid":3,"name":"bbb"}"#.to_vec();
+        let frame = decode_frame(&encode_frame(&Frame::new(NOTIFY_ADD_FRIEND, body)).unwrap()).unwrap();
+        let parsed: NotifyAddFriend = serde_json::from_slice(&frame.body).unwrap();
+        assert_eq!(parsed.applyuid, 3);
+        assert_eq!(parsed.name, "bbb");
+    }
+
+    #[test]
+    fn simple_response_reports_ok() {
+        let ok: SimpleResponse = serde_json::from_str(r#"{"error":0,"message":"Success"}"#).unwrap();
+        assert!(ok.is_ok());
+        let err: SimpleResponse = serde_json::from_str(r#"{"error":1011,"message":"UserNotFound"}"#).unwrap();
+        assert!(!err.is_ok());
     }
 }

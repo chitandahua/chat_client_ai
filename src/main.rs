@@ -9,15 +9,33 @@ use std::sync::{Arc, Mutex};
 
 use app::{AppState, Friend};
 use connection::Connection;
-use protocol::{Frame, IncomingText, LoginResponse, TextChatData, TextChatRequest};
+use protocol::{
+    AddFriendRequest, AuthFriendRequest, Frame, IncomingText, LoginResponse, NotifyAddFriend,
+    SearchRequest, SimpleResponse, TextChatData, TextChatRequest, UserInfo,
+};
+
+/// A request the UI sends to the network loop, executed on the live connection.
+#[derive(Debug, Clone)]
+enum NetCmd {
+    SendText { touid: i64, text: String },
+    Search { name: String },
+    AddFriend { touid: i64 },
+    ApproveApply { fromuid: i64 },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum SearchOutcome {
+    Found(UserInfo),
+    Unavailable(String),
+}
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
     let state = Arc::new(Mutex::new(AppState::new()));
 
-    // UI -> network channel for outgoing text. UnboundedSender::send is sync
-    // and callable from the UI thread; the network loop owns the receiver.
-    let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String, i64)>();
+    // UI -> network channel for outgoing commands. UnboundedSender::send is
+    // sync and callable from the UI thread; the network loop owns the receiver.
+    let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<NetCmd>();
     let out_tx = Arc::new(Mutex::new(out_tx));
     let out_rx = Arc::new(Mutex::new(Some(out_rx)));
 
@@ -95,7 +113,69 @@ fn main() -> Result<(), slint::PlatformError> {
             if touid == 0 {
                 return;
             }
-            let _ = out_tx.lock().unwrap().send((friend, text, touid));
+            let _ = out_tx.lock().unwrap().send(NetCmd::SendText { touid, text });
+        }
+    });
+
+    ui.on_search_user({
+        let ui = ui.as_weak();
+        let out_tx = Arc::clone(&out_tx);
+        move |name| {
+            if name.trim().is_empty() {
+                return;
+            }
+            if let Some(ui) = ui.upgrade() {
+                ui.set_search_in_progress(true);
+                ui.set_search_status("".into());
+                ui.set_search_result("".into());
+            }
+            let _ = out_tx.lock().unwrap().send(NetCmd::Search { name: name.trim().to_string() });
+        }
+    });
+
+    ui.on_add_friend({
+        let ui = ui.as_weak();
+        let state = Arc::clone(&state);
+        let out_tx = Arc::clone(&out_tx);
+        move || {
+            let touid = {
+                let s = state.lock().unwrap();
+                s.search_result.as_ref().map(|f| f.id).unwrap_or(0)
+            };
+            if touid == 0 {
+                if let Some(ui) = ui.upgrade() {
+                    ui.set_search_status("无法添加:缺少用户 uid".into());
+                }
+                return;
+            }
+            let _ = out_tx.lock().unwrap().send(NetCmd::AddFriend { touid });
+        }
+    });
+
+    ui.on_approve_apply({
+        let state = Arc::clone(&state);
+        let out_tx = Arc::clone(&out_tx);
+        move |name| {
+            let fromuid = {
+                let s = state.lock().unwrap();
+                s.approve_apply_uid(&name).unwrap_or(0)
+            };
+            if fromuid == 0 {
+                return;
+            }
+            let _ = out_tx.lock().unwrap().send(NetCmd::ApproveApply { fromuid });
+        }
+    });
+
+    ui.on_reject_apply({
+        let state = Arc::clone(&state);
+        let ui = ui.as_weak();
+        move |name| {
+            let mut s = state.lock().unwrap();
+            s.reject_apply(&name);
+            if let Some(ui) = ui.upgrade() {
+                push_ui_from_state(&ui, &s);
+            }
         }
     });
 
@@ -127,8 +207,12 @@ fn push_ui_from_state(ui: &MainWindow, s: &AppState) {
         .map(|f| if s.unread.iter().any(|u| u == &f.name) { 1 } else { 0 })
         .collect();
 
+    let apply_names: Vec<slint::SharedString> =
+        s.applies.iter().map(|a| slint::SharedString::from(a.name.clone())).collect();
+
     ui.set_chat_messages(std::rc::Rc::new(slint::VecModel::from(messages)).into());
     ui.set_unread_flags(std::rc::Rc::new(slint::VecModel::from(unread_flags)).into());
+    ui.set_apply_names(std::rc::Rc::new(slint::VecModel::from(apply_names)).into());
 }
 
 /// Network thread: gate login -> TCP login -> persistent connection.
@@ -136,7 +220,7 @@ fn push_ui_from_state(ui: &MainWindow, s: &AppState) {
 async fn run_network(
     ui: slint::Weak<MainWindow>,
     state: Arc<Mutex<AppState>>,
-    out_rx: tokio::sync::mpsc::UnboundedReceiver<(String, String, i64)>,
+    out_rx: tokio::sync::mpsc::UnboundedReceiver<NetCmd>,
     server_host: String,
     username: String,
     password: String,
@@ -183,23 +267,192 @@ async fn run_network(
                 handle_incoming_frame(&ui, Arc::clone(&state), &frame);
             }
             cmd = out_rx.recv() => {
-                let Some((_friend, text, touid)) = cmd else { return };
-                let msgid = 1;
-                let fromuid = state.lock().unwrap().my_uid;
-                let req = TextChatRequest {
-                    fromuid,
-                    touid,
-                    text_array: vec![TextChatData { msgid, content: text.clone() }],
-                };
-                if let Ok(body) = serde_json::to_vec(&req) {
-                    let _ = conn.send(&Frame::new(protocol::TEXT_CHAT_REQUEST, body)).await;
-                }
+                let Some(cmd) = cmd else { return };
+                handle_net_cmd(&ui, Arc::clone(&state), &mut conn, cmd).await;
             }
         }
     }
 }
 
+/// Execute one UI-initiated command on the live connection, then consume the
+/// single matching response frame (skipping any interleaved pushes).
+async fn handle_net_cmd(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    conn: &mut Connection,
+    cmd: NetCmd,
+) {
+    let (frame_to_send, expected_id) = match &cmd {
+        NetCmd::SendText { touid, text } => {
+            let fromuid = state.lock().unwrap().my_uid;
+            let req = TextChatRequest {
+                fromuid,
+                touid: *touid,
+                text_array: vec![TextChatData { msgid: 1, content: text.clone() }],
+            };
+            (Frame::new(protocol::TEXT_CHAT_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::TEXT_CHAT_RESPONSE)
+        }
+        NetCmd::Search { name } => {
+            let req = SearchRequest::by_name(name.clone());
+            (Frame::new(protocol::SEARCH_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::SEARCH_REQUEST + 1)
+        }
+        NetCmd::AddFriend { touid } => {
+            let my_uid = state.lock().unwrap().my_uid;
+            let req = AddFriendRequest { uid: my_uid, touid: *touid };
+            (Frame::new(protocol::ADD_FRIEND_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::ADD_FRIEND_REQUEST + 1)
+        }
+        NetCmd::ApproveApply { fromuid } => {
+            let my_uid = state.lock().unwrap().my_uid;
+            let req = AuthFriendRequest { fromuid: my_uid, touid: *fromuid };
+            (Frame::new(protocol::AUTH_FRIEND_REQUEST, serde_json::to_vec(&req).unwrap()), protocol::AUTH_FRIEND_REQUEST + 1)
+        }
+    };
+
+    if let Err(e) = conn.send(&frame_to_send).await {
+        let _ = ui.upgrade_in_event_loop(move |ui| {
+            ui.set_search_status(format!("发送失败: {e}").into());
+        });
+        return;
+    }
+
+    // Wait for the response, skipping interleaved push frames.
+    let timeout = std::time::Duration::from_secs(5);
+    loop {
+        let frame = match tokio::time::timeout(timeout, conn.recv()).await {
+            Ok(Ok(f)) => f,
+            Ok(Err(e)) => {
+                let msg = format!("连接断开: {e}");
+                let _ = ui.upgrade_in_event_loop(move |ui| {
+                    state.lock().unwrap().login_failed(msg.clone());
+                    ui.set_login_status(msg.into());
+                });
+                return;
+            }
+            Err(_) => {
+                if let NetCmd::Search { .. } = cmd {
+                    let _ = ui.upgrade_in_event_loop(move |ui| {
+                        ui.set_search_in_progress(false);
+                        ui.set_search_status("搜索超时".into());
+                    });
+                }
+                return;
+            }
+        };
+
+        if frame.id == expected_id {
+            handle_response_frame(ui, state, &cmd, &frame).await;
+            return;
+        }
+        // interleaved push — dispatch and keep waiting
+        handle_incoming_frame(ui, Arc::clone(&state), &frame);
+    }
+}
+
+/// Handle a response frame matching the outstanding command.
+async fn handle_response_frame(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    cmd: &NetCmd,
+    frame: &Frame,
+) {
+    match cmd {
+        NetCmd::SendText { .. } => {
+            // text chat response 1018 — errors surfaced via a status; nothing to render
+            let _ = frame;
+        }
+        NetCmd::Search { .. } => {
+            let outcome = match serde_json::from_slice::<UserInfo>(&frame.body) {
+                Ok(user) => SearchOutcome::Found(user),
+                Err(_) => {
+                    // server returns an error envelope on failure (e.g. the known
+                    // InvalidJson bug) — treat as "unavailable"
+                    if let Ok(SimpleResponse { error, .. }) = serde_json::from_slice::<SimpleResponse>(&frame.body) {
+                        if error == 0 {
+                            SearchOutcome::Unavailable("搜索无结果".into())
+                        } else {
+                            SearchOutcome::Unavailable("搜索不可用(服务端错误)".into())
+                        }
+                    } else {
+                        SearchOutcome::Unavailable("搜索响应解析失败".into())
+                    }
+                }
+            };
+
+            match outcome {
+                SearchOutcome::Found(user) => {
+                    state.lock().unwrap().set_search_result(Some(Friend { id: user.id, name: user.name.clone() }));
+                    let name = user.name.clone();
+                    let is_friend = state.lock().unwrap().friends.iter().any(|f| f.id == user.id);
+                    let _ = ui.upgrade_in_event_loop(move |ui| {
+                        ui.set_search_in_progress(false);
+                        ui.set_search_result(name.into());
+                        ui.set_search_result_is_friend(is_friend);
+                        ui.set_search_status("".into());
+                    });
+                }
+                SearchOutcome::Unavailable(msg) => {
+                    state.lock().unwrap().set_search_result(None);
+                    let msg = msg.clone();
+                    let _ = ui.upgrade_in_event_loop(move |ui| {
+                        ui.set_search_in_progress(false);
+                        ui.set_search_result("".into());
+                        ui.set_search_result_is_friend(false);
+                        ui.set_search_status(msg.into());
+                    });
+                }
+            }
+        }
+        NetCmd::AddFriend { touid } => {
+            let ok = serde_json::from_slice::<SimpleResponse>(&frame.body)
+                .map(|r| r.is_ok())
+                .unwrap_or(false);
+            let my_uid = state.lock().unwrap().my_uid;
+            let _ = (touid, my_uid);
+            let msg = if ok { "申请已发送".to_string() } else { "加好友失败".to_string() };
+            let _ = ui.upgrade_in_event_loop(move |ui| {
+                ui.set_search_status(msg.into());
+            });
+        }
+        NetCmd::ApproveApply { fromuid } => {
+            let ok = serde_json::from_slice::<SimpleResponse>(&frame.body)
+                .map(|r| r.is_ok())
+                .unwrap_or(false);
+            let approved = {
+                let mut s = state.lock().unwrap();
+                s.approve_apply(*fromuid)
+            };
+            let ui2 = ui.clone();
+            let state2 = Arc::clone(&state);
+            let _ = ui.upgrade_in_event_loop(move |ui| {
+                if ok {
+                    if let Some(_name) = approved {
+                        let s = state2.lock().unwrap();
+                        ui.set_apply_status("已同意".into());
+                        push_ui_from_state(&ui, &s);
+                    }
+                } else {
+                    ui.set_apply_status("同意失败".into());
+                }
+            });
+            let _ = ui2;
+        }
+    }
+}
+
 fn handle_incoming_frame(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>, frame: &Frame) {
+    // Incoming friend-apply push (1011).
+    if frame.id == protocol::NOTIFY_ADD_FRIEND {
+        if let Ok(apply) = serde_json::from_slice::<NotifyAddFriend>(&frame.body) {
+            let apply = apply.clone();
+            let _ = ui.upgrade_in_event_loop(move |ui| {
+                let mut s = state.lock().unwrap();
+                s.apply_received(apply.applyuid, apply.name.clone());
+                push_ui_from_state(&ui, &s);
+            });
+        }
+        return;
+    }
+
     // Incoming text may arrive as 1015 (server bug) or 1019.
     if frame.id != protocol::NOTIFY_TEXT_CHAT && frame.id != protocol::NOTIFY_AUTH_FRIEND {
         return;

@@ -17,10 +17,23 @@ export component MainWindow inherits Window {
     in-out property <string> selected-friend: "";
     in-out property <[string]> chat-messages: [];
     in-out property <string> message-input: "";
+    // search
+    in-out property <string> search-input: "";
+    in-out property <bool> search-in-progress: false;
+    in-out property <string> search-result: "";
+    in-out property <bool> search-result-is-friend: false;
+    in-out property <string> search-status: "";
+    // pending friend applies
+    in-out property <[string]> apply-names: [];
+    in-out property <string> apply-status: "";
 
     callback do-login();
     callback select-friend(string);
     callback send-text(string, string);
+    callback search-user(string);
+    callback add-friend();
+    callback approve-apply(string);
+    callback reject-apply(string);
 
     // ============================ LOGIN SCREEN ============================
     if !root.logged-in : Rectangle {
@@ -69,6 +82,59 @@ export component MainWindow inherits Window {
             background: #f5f6f7;
             VerticalBox {
                 Rectangle { height: 36px; Text { text: "好友"; font-size: 15px; font-weight: 600; color: #333333; x: 8px; y: 10px; } }
+
+                // ---- search ----
+                HorizontalBox {
+                    padding: 4px;
+                    spacing: 4px;
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        placeholder-text: "搜索用户名";
+                        text: root.search-input;
+                        edited(text) => { root.search-input = text; }
+                        accepted => { root.search-user(root.search-input); }
+                    }
+                    Button {
+                        text: "搜索";
+                        clicked => { root.search-user(root.search-input); }
+                    }
+                }
+                if root.search-in-progress : Text { text: "搜索中…"; font-size: 12px; color: #888888; x: 8px; }
+                if root.search-result != "" : Rectangle {
+                    height: 40px;
+                    background: #ffffff;
+                    border-radius: 8px;
+                    HorizontalBox {
+                        padding-left: 10px;
+                        Text { text: root.search-result; font-size: 13px; color: #333333; y: 12px; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button {
+                            text: root.search-result-is-friend ? "已是好友" : "加好友";
+                            enabled: !root.search-result-is-friend;
+                            clicked => { root.add-friend(); }
+                        }
+                    }
+                }
+                if root.search-status != "" : Text { text: root.search-status; font-size: 12px; color: #e64c3c; x: 8px; }
+
+                Rectangle { height: 6px; }
+
+                // ---- pending applies ----
+                for apply in root.apply-names : Rectangle {
+                    height: 40px;
+                    background: #fff7e6;
+                    border-radius: 8px;
+                    HorizontalBox {
+                        padding-left: 10px;
+                        Text { text: apply + " 请求加你为好友"; font-size: 13px; color: #8a6d3b; y: 12px; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "同意"; clicked => { root.approve-apply(apply); } }
+                        Button { text: "忽略"; clicked => { root.reject-apply(apply); } }
+                    }
+                }
+                if root.apply-status != "" : Text { text: root.apply-status; font-size: 12px; color: #07c160; x: 8px; }
+
+                // ---- friend list ----
                 for name[idx] in root.friend-names : Rectangle {
                     height: 44px;
                     border-radius: 8px;

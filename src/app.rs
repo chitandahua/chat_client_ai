@@ -48,6 +48,13 @@ pub struct Conversation {
     pub messages: Vec<ChatMessage>,
 }
 
+/// A pending friend-apply received from another user (not yet approved).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriendApply {
+    pub from_uid: i64,
+    pub name: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub login_status: LoginStatus,
@@ -59,6 +66,10 @@ pub struct AppState {
     pub open: Vec<String>,
     /// Friend names with unread messages (not currently open).
     pub unread: Vec<String>,
+    /// Pending friend-applies awaiting my approval.
+    pub applies: Vec<FriendApply>,
+    /// The last search result (uid, name), if any.
+    pub search_result: Option<Friend>,
 }
 
 impl AppState {
@@ -70,6 +81,8 @@ impl AppState {
             conversations: Vec::new(),
             open: Vec::new(),
             unread: Vec::new(),
+            applies: Vec::new(),
+            search_result: None,
         }
     }
 
@@ -81,6 +94,40 @@ impl AppState {
         self.my_uid = my_uid;
         self.friends = friends;
         self.login_status = LoginStatus::Connected;
+    }
+
+    /// Record an incoming friend-apply push.
+    pub fn apply_received(&mut self, from_uid: i64, name: String) {
+        if self.applies.iter().any(|a| a.from_uid == from_uid) {
+            return;
+        }
+        self.applies.push(FriendApply { from_uid, name });
+    }
+
+    /// Approve a pending apply: remove it and add the user as a friend.
+    /// Returns the name of the approved user.
+    pub fn approve_apply(&mut self, from_uid: i64) -> Option<String> {
+        let idx = self.applies.iter().position(|a| a.from_uid == from_uid)?;
+        let apply = self.applies.remove(idx);
+        if !self.friends.iter().any(|f| f.id == from_uid) {
+            self.friends.push(Friend { id: from_uid, name: apply.name.clone() });
+        }
+        Some(apply.name)
+    }
+
+    /// Find the uid of a pending apply by its display name.
+    pub fn approve_apply_uid(&self, name: &str) -> Option<i64> {
+        self.applies.iter().find(|a| a.name == name).map(|a| a.from_uid)
+    }
+
+    /// Drop a pending apply by display name without adding a friend.
+    pub fn reject_apply(&mut self, name: &str) {
+        self.applies.retain(|a| a.name != name);
+    }
+
+    /// Store the result of a user search.
+    pub fn set_search_result(&mut self, result: Option<Friend>) {
+        self.search_result = result;
     }
 
     pub fn login_failed(&mut self, message: String) {
@@ -247,5 +294,31 @@ mod tests {
 
         state.open_conversation("aaa");
         assert!(!state.unread.contains(&"aaa".to_string()));
+    }
+
+    #[test]
+    fn apply_received_stores_pending_apply_once() {
+        let mut state = AppState::new();
+        state.apply_received(3, "bbb".into());
+        state.apply_received(3, "bbb".into()); // duplicate ignored
+        assert_eq!(state.applies.len(), 1);
+        assert_eq!(state.applies[0].from_uid, 3);
+        assert_eq!(state.applies[0].name, "bbb");
+    }
+
+    #[test]
+    fn approve_apply_removes_and_adds_friend() {
+        let mut state = AppState::new();
+        state.apply_received(3, "bbb".into());
+        let name = state.approve_apply(3);
+        assert_eq!(name, Some("bbb".to_string()));
+        assert!(state.applies.is_empty());
+        assert!(state.friends.iter().any(|f| f.id == 3 && f.name == "bbb"));
+    }
+
+    #[test]
+    fn approve_apply_for_unknown_uid_returns_none() {
+        let mut state = AppState::new();
+        assert_eq!(state.approve_apply(99), None);
     }
 }

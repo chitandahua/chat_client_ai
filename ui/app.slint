@@ -1,36 +1,95 @@
-// Login screen — ticket 1. No network attached yet; the login button only
-// sets a status message via the do-login callback.
+// Login screen + main window. Tickets 1-2: real login via gate + chat server,
+// main window shows the friend list from the login response. Chat pane lands in ticket 3.
 import { Button, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 
 export component MainWindow inherits Window {
     title: "Chat";
-    width: 420px;
-    height: 520px;
+    width: 760px;
+    height: 540px;
     background: #ffffff;
 
+    in-out property <string> server-host: "";
+    in-out property <string> username: "";
+    in-out property <string> password: "";
     in-out property <string> login-status: "";
+    in-out property <bool> logged-in: false;
+    in-out property <[string]> friend-names: [];
 
     callback do-login();
 
-    VerticalBox {
-        padding: 32px;
-        spacing: 12px;
-        alignment: center;
+    // ============================ LOGIN SCREEN ============================
+    if !root.logged-in : Rectangle {
+        background: #ffffff;
+        VerticalBox {
+            width: 380px;
+            x: (parent.width - 380px) / 2;
+            y: (parent.height - 340px) / 2;
+            padding: 32px;
+            spacing: 12px;
 
-        Text { text: "Chat"; font-size: 30px; font-weight: 700; color: #07c160; horizontal-alignment: center; }
-        Text { text: "连接服务器并登录"; font-size: 13px; color: #888888; horizontal-alignment: center; }
+            Text { text: "Chat"; font-size: 30px; font-weight: 700; color: #07c160; horizontal-alignment: center; }
+            Text { text: "连接服务器并登录"; font-size: 13px; color: #888888; horizontal-alignment: center; }
 
-        Rectangle { height: 12px; }
+            Rectangle { height: 12px; }
 
-        LineEdit { placeholder-text: "服务器 host:port"; text: ""; }
-        LineEdit { placeholder-text: "用户名"; text: ""; }
-        LineEdit { placeholder-text: "密码"; input-type: password; }
+            LineEdit {
+                placeholder-text: "服务器 host:port";
+                text: root.server-host;
+                edited(text) => { root.server-host = text; }
+            }
+            LineEdit {
+                placeholder-text: "用户名";
+                text: root.username;
+                edited(text) => { root.username = text; }
+            }
+            LineEdit {
+                placeholder-text: "密码";
+                text: root.password;
+                edited(text) => { root.password = text; }
+            }
 
-        Button {
-            text: "登录";
-            clicked => { root.do-login(); }
+            Button {
+                text: "登录";
+                clicked => { root.do-login(); }
+            }
+
+            Text { text: root.login-status; color: #e64c3c; font-size: 12px; horizontal-alignment: center; }
         }
+    }
 
-        Text { text: root.login-status; color: #e64c3c; font-size: 12px; horizontal-alignment: center; }
+    // ============================ MAIN WINDOW ============================
+    if root.logged-in : HorizontalBox {
+        Rectangle {
+            width: 240px;
+            background: #f5f6f7;
+            VerticalBox {
+                padding: 8px;
+                spacing: 4px;
+                Rectangle { height: 36px; Text { text: "好友"; font-size: 15px; font-weight: 600; color: #333333; x: 8px; y: 10px; } }
+                for name in root.friend-names : Rectangle {
+                    height: 40px;
+                    border-radius: 8px;
+                    background: #e8f5ee;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Rectangle { width: 24px; height: 24px; y: 8px; border-radius: 12px; background: #07c160; }
+                        Rectangle { width: 8px; }
+                        Text { text: name; y: 11px; font-size: 14px; color: #333333; }
+                    }
+                }
+            }
+        }
+        Rectangle { width: 1px; height: 100%; background: #e3e6ea; }
+        Rectangle {
+            horizontal-stretch: 1;
+            background: #ffffff;
+            VerticalBox {
+                Rectangle {
+                    height: 48px;
+                    background: #f3f5f7;
+                    Text { text: "选择一个好友开始聊天"; font-size: 14px; color: #999999; x: 16px; y: 16px; }
+                }
+            }
+        }
     }
 }

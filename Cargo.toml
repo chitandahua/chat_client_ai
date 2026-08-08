@@ -6,6 +6,12 @@ build = "build.rs"
 
 [dependencies]
 slint = "1.17.1"
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+reqwest = { version = "0.13", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-compat = "0.2"
+thiserror = "2"
 
 [build-dependencies]
 slint-build = "1.17.1"
